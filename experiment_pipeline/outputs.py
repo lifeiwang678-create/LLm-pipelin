@@ -24,7 +24,8 @@ class LabelOnlyOutput(OutputHandler):
 
     def __init__(self, labels: list[int], fallback_label: int | None = None) -> None:
         self.labels = labels
-        self.fallback_label = fallback_label if fallback_label is not None else labels[0]
+        if fallback_label is not None:
+            raise ValueError("fallback_label is disabled. Parse failures are recorded as invalid.")
 
     def instructions(self, labels: list[int]) -> str:
         return f"""Output format:
@@ -35,25 +36,35 @@ Return STRICT JSON only.
 }}"""
 
     def parse(self, text: str) -> dict:
-        label = self._parse_label(text)
-        return {"label": label, "explanation": ""}
+        label, error = self._parse_label(text)
+        return {
+            "label": label,
+            "explanation": "",
+            "valid": label is not None,
+            "parse_error": error,
+        }
 
-    def _parse_label(self, text: str) -> int:
+    def _parse_label(self, text: str) -> tuple[int | None, str]:
         match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                obj = json.loads(match.group(0))
-                pred = int(obj["predicted_state"])
-                if pred in self.labels:
-                    return pred
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                pass
+        if not match:
+            return None, "no_json_object"
 
-        label_pattern = "|".join(str(label) for label in self.labels)
-        loose_match = re.search(rf"\b({label_pattern})\b", text)
-        if loose_match:
-            return int(loose_match.group(1))
-        return int(self.fallback_label)
+        try:
+            obj = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+
+        if "predicted_state" not in obj:
+            return None, "missing_predicted_state"
+
+        try:
+            pred = int(obj["predicted_state"])
+        except (TypeError, ValueError):
+            return None, "non_integer_predicted_state"
+
+        if pred not in self.labels:
+            return None, f"out_of_label_space:{pred}"
+        return pred, ""
 
 
 class LabelExplanationOutput(LabelOnlyOutput):
@@ -69,7 +80,7 @@ Return STRICT JSON only.
 }}"""
 
     def parse(self, text: str) -> dict:
-        label = self._parse_label(text)
+        label, error = self._parse_label(text)
         explanation = ""
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
@@ -78,7 +89,12 @@ Return STRICT JSON only.
                 explanation = str(obj.get("explanation", "")).strip()
             except json.JSONDecodeError:
                 explanation = ""
-        return {"label": label, "explanation": explanation}
+        return {
+            "label": label,
+            "explanation": explanation,
+            "valid": label is not None,
+            "parse_error": error,
+        }
 
 
 def build_output_handler(config: dict, labels: list[int]):

@@ -30,8 +30,7 @@
     }
   },
   "output": {
-    "type": "label_only",
-    "fallback_label": 1
+    "type": "label_only"
   },
   "evaluation": {
     "log_every": 10

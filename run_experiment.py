@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from experiment_pipeline.evaluation import limit_samples, summarize_and_save
+from experiment_pipeline.evaluation import label_distribution, limit_samples, summarize_and_save
 from experiment_pipeline.inputs import build_input_provider
 from experiment_pipeline.lm_client import LMStudioClient
 from experiment_pipeline.lm_usage import build_lm_usage
@@ -26,6 +26,15 @@ def choose_subject_split(config: dict) -> tuple[list[str] | None, list[str] | No
     return train_subjects, test_subjects
 
 
+def validate_fewshot_split(train_subjects: list[str] | None, test_subjects: list[str] | None) -> None:
+    if not train_subjects or not test_subjects:
+        raise ValueError("few_shot requires explicit data.train_subjects and data.test_subjects.")
+
+    overlap = sorted(set(train_subjects) & set(test_subjects))
+    if overlap:
+        raise ValueError(f"few_shot leakage: test subjects also appear in examples: {overlap}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a modular WESAD LLM experiment.")
     parser.add_argument("--config", default="configs/example_experiment.json", help="Path to JSON config.")
@@ -40,20 +49,37 @@ def main() -> None:
     usage_type = str(config.get("lm_usage", {}).get("type", "direct")).lower()
 
     if usage_type in {"fewshot", "few_shot", "few-shot"}:
+        validate_fewshot_split(train_subjects, test_subjects)
         train_samples = input_provider.load(train_subjects, labels)
         if not train_samples:
             raise RuntimeError("Few-shot mode needs non-empty training samples.")
+        print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
         eval_samples = input_provider.load(test_subjects, labels)
+        example_subjects = {sample.subject for sample in train_samples}
+        leaked_subjects = sorted(example_subjects & set(test_subjects))
+        if leaked_subjects:
+            raise ValueError(f"few_shot leakage after loading samples: {leaked_subjects}")
     else:
         train_samples = []
         eval_samples = input_provider.load(test_subjects, labels)
 
     eval_cfg = config.get("evaluation", {})
+    print(f"Label distribution before sampling: {label_distribution(eval_samples)}")
     eval_samples = limit_samples(
         eval_samples,
         limit=eval_cfg.get("sample_limit"),
         per_subject_limit=eval_cfg.get("per_subject_limit"),
+        balanced_per_label=eval_cfg.get("balanced_per_label"),
     )
+    sampled_distribution = label_distribution(eval_samples)
+    print(f"Label distribution after sampling: {sampled_distribution}")
+    if eval_cfg.get("balanced_per_label") is not None:
+        expected = int(eval_cfg["balanced_per_label"])
+        short = {label: sampled_distribution.get(label, 0) for label in labels if sampled_distribution.get(label, 0) != expected}
+        if short:
+            raise RuntimeError(
+                f"Balanced debug subset failed. Expected {expected} samples per label, got {short}."
+            )
     if not eval_samples:
         raise RuntimeError("No evaluation samples found for this configuration.")
 
@@ -81,12 +107,15 @@ def main() -> None:
             prompt = lm_usage.build_prompt(sample)
             raw_response = client.complete(prompt)
             parsed = output_handler.parse(raw_response)
-        pred = int(parsed["label"])
+        valid = bool(parsed.get("valid", parsed.get("label") is not None))
+        pred = int(parsed["label"]) if valid else ""
         records.append(
             {
                 "subject": sample.subject,
                 "y_true": sample.label,
                 "y_pred": pred,
+                "valid": valid,
+                "parse_error": parsed.get("parse_error", ""),
                 "explanation": parsed.get("explanation", ""),
                 "raw_response": raw_response,
                 **sample.meta,
@@ -104,7 +133,11 @@ def main() -> None:
         config=config,
     )
     print("=" * 50)
-    print(f"Accuracy: {metrics['accuracy'] * 100:.2f}%")
+    if metrics["accuracy"] is None:
+        print("Accuracy: n/a (no valid predictions)")
+    else:
+        print(f"Accuracy: {metrics['accuracy'] * 100:.2f}%")
+    print(f"Invalid predictions: {metrics['invalid_count']}/{metrics['n_samples']}")
     print(f"Predictions: {metrics['predictions_path']}")
     print(f"Metrics: {metrics['metrics_path']}")
 

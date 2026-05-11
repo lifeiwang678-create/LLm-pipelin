@@ -202,6 +202,8 @@ class SensorLLMCheckpointUsage(LMUsage):
         label_name = self.model.config.id2label.get(pred_class_id, str(pred_class_id))
         return {
             "label": label,
+            "valid": True,
+            "parse_error": "",
             "explanation": (
                 f"SensorLLM embedding-alignment checkpoint predicted {label_name} "
                 f"from the time-series logits with confidence {confidence:.4f}."

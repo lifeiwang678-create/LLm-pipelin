@@ -30,3 +30,18 @@ For 3-class experiments, change `labels` to `[1, 2, 3]`.
 
 `embedding_alignment` and `extra_knowledge` are intentionally registered as interfaces first.
 Selecting either one will raise `NotImplementedError` until its `load()` method is filled in.
+
+Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
+
+For debug runs, use balanced sampling:
+
+```json
+{
+  "evaluation": {
+    "balanced_per_label": 10,
+    "log_every": 10
+  }
+}
+```
+
+Few-shot runs must explicitly set both `data.train_subjects` and `data.test_subjects`; overlapping subjects are rejected.
