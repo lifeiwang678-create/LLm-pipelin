@@ -1,0 +1,30 @@
+__pycache__/
+*.pyc
+
+# Local IDE / OS files
+.vscode/
+.DS_Store
+
+# WESAD raw data and generated feature files
+S*/
+*_features_paperstyle.csv
+*_features_final.csv
+
+# Generated outputs
+outputs*/
+sensorllm_wesad*/
+
+# Local model checkpoints and large binary artifacts
+vicuna-7b-v1.5/
+*.pkl
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.zip
+*.crdownload
+
+# Figures and temporary analysis artifacts
+*.png
+*.pdf
+

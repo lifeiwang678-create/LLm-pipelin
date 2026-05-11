@@ -1,0 +1,41 @@
+{
+  "run_name": "wesad_embedding_alignment_sensorllm_fold_s2_label_explanation",
+  "labels": [1, 2],
+  "output_dir": "outputs_modular",
+  "data": {
+    "subjects": ["S2"]
+  },
+  "input": {
+    "type": "embedding_alignment",
+    "data_path": "sensorllm_wesad_binary_loso/fold_S2/eval_data.pkl",
+    "qa_path": "sensorllm_wesad_binary_loso/fold_S2/eval_qa.json",
+    "label_map": {
+      "Non-stress": 1,
+      "Stress": 2
+    }
+  },
+  "lm_usage": {
+    "type": "direct",
+    "checkpoint_path": "sensorllm_wesad_binary_output_formal/fold_S2",
+    "pt_encoder_backbone_ckpt": "D:/models/chronos-t5-large",
+    "dataset": "wesad_binary",
+    "tokenize_method": "StanNormalizeUniformBins",
+    "torch_dtype": "float32",
+    "device": "auto",
+    "model_max_length": 2048,
+    "preprocess_type": "smry+trend+Q",
+    "label_id_map": {
+      "0": 1,
+      "1": 2
+    }
+  },
+  "output": {
+    "type": "label_explanation",
+    "fallback_label": 1
+  },
+  "evaluation": {
+    "sample_limit": 5,
+    "log_every": 1
+  }
+}
+
