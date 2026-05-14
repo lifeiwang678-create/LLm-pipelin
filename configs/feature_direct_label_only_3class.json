@@ -1,15 +1,14 @@
 {
-  "run_name": "wesad_raw_direct_label",
-  "labels": [1, 2],
+  "run_name": "wesad_feature_direct_label_only_3class",
+  "labels": [1, 2, 3],
   "output_dir": "outputs_modular",
   "data": {
     "subjects": ["S2", "S3"]
   },
   "input": {
-    "type": "raw_data",
+    "type": "feature_description",
     "data_dir": ".",
-    "window_sec": 10.0,
-    "stride_sec": 15.0
+    "pattern": "*_features_paperstyle.csv"
   },
   "lm_usage": {
     "type": "direct"
@@ -22,11 +21,11 @@
     "api_key": "lm-studio",
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
-    "max_tokens": 256,
-    "timeout": 60
+    "max_tokens": 128,
+    "timeout": 30
   },
   "evaluation": {
     "balanced_per_label": 10,
-    "log_every": 5
+    "log_every": 10
   }
 }

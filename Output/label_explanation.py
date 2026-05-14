@@ -1,4 +1,39 @@
-from experiment_pipeline.outputs import LabelExplanationOutput
+from __future__ import annotations
+
+import json
+import re
+
+from .label_only import LabelOnlyOutput
+
+
+class LabelExplanationOutput(LabelOnlyOutput):
+    name = "label_explanation"
+
+    def instructions(self, labels: list[int]) -> str:
+        return f"""Output format:
+Return STRICT JSON only.
+
+{{
+  "predicted_state": {" or ".join(str(x) for x in labels)},
+  "explanation": "one short sentence explaining the decision using only the provided input"
+}}"""
+
+    def parse(self, text: str) -> dict:
+        label, error = self._parse_label(text)
+        explanation = ""
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                obj = json.loads(match.group(0))
+                explanation = str(obj.get("explanation", "")).strip()
+            except json.JSONDecodeError:
+                explanation = ""
+        return {
+            "label": label,
+            "explanation": explanation,
+            "valid": label is not None,
+            "parse_error": error,
+        }
+
 
 __all__ = ["LabelExplanationOutput"]
-
