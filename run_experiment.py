@@ -4,11 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
-from experiment_pipeline.evaluation import label_distribution, limit_samples, summarize_and_save
-from experiment_pipeline.inputs import build_input_provider
-from experiment_pipeline.lm_client import LMStudioClient
-from experiment_pipeline.lm_usage import build_lm_usage
-from experiment_pipeline.outputs import build_output_handler
+from core.evaluation import label_distribution, limit_samples, summarize_and_save
+from core.inputs import build_input_provider
+from core.lm_client import LMStudioClient
+from core.lm_usage import build_lm_usage
+from core.outputs import build_output_handler
+from core.splits import validate_fewshot_split
 
 
 def load_config(path: str | Path) -> dict:
@@ -24,15 +25,6 @@ def choose_subject_split(config: dict) -> tuple[list[str] | None, list[str] | No
     train_subjects = data_cfg.get("train_subjects")
     test_subjects = data_cfg.get("test_subjects") or data_cfg.get("subjects")
     return train_subjects, test_subjects
-
-
-def validate_fewshot_split(train_subjects: list[str] | None, test_subjects: list[str] | None) -> None:
-    if not train_subjects or not test_subjects:
-        raise ValueError("few_shot requires explicit data.train_subjects and data.test_subjects.")
-
-    overlap = sorted(set(train_subjects) & set(test_subjects))
-    if overlap:
-        raise ValueError(f"few_shot leakage: test subjects also appear in examples: {overlap}")
 
 
 def main() -> None:

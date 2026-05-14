@@ -19,6 +19,8 @@ Results/*
 # Local dataset packages
 Dataset/*
 !Dataset/README.md
+!Dataset/__init__.py
+!Dataset/registry.py
 !Dataset/WESAD/
 !Dataset/WESAD/.gitkeep
 !Dataset/HHAR/

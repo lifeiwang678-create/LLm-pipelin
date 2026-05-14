@@ -17,40 +17,42 @@ The framework code is lightweight. Dataset packages, generated feature CSVs, Sen
 │   ├── HHAR/
 │   └── DREAMT/
 ├── Input/
-│   ├── raw_data.py
-│   ├── feature_description.py
-│   ├── embedding_alignment.py
-│   └── extra_knowledge.py
+│   ├── raw_data.py              # Raw WESAD pkl loading, windowing, normalization
+│   ├── feature_description.py   # Feature CSV loading and text formatting
+│   ├── embedding_alignment.py   # SensorLLM fold QA/data alignment
+│   └── extra_knowledge.py       # Feature input with appended knowledge text
 ├── LM/
-│   ├── direct.py
-│   ├── few_shot.py
-│   └── multi_agent.py
+│   ├── direct.py                # Direct prompt construction
+│   ├── few_shot.py              # Few-shot example sampling and prompt construction
+│   └── multi_agent.py           # Multi-agent prompt construction
 ├── Output/
-│   ├── label.py
-│   └── label_explanation.py
+│   ├── label_only.py            # Strict label-only JSON parser
+│   └── label_explanation.py     # Strict label + explanation JSON parser
 ├── Results/              # Experiment CSV outputs, not uploaded
-├── main.py               # CLI entry point
-└── experiment_pipeline/  # Shared implementation backend
+├── main.py               # Thin module-composition entry point
+└── core/                 # CLI, runner, shared schema, LM client, evaluation helpers
 ```
+
+`main.py` only parses arguments and delegates module selection/execution to `core/runner.py`.
 
 ## Run
 
 Run with explicit dataset, input, LM usage, and output:
 
 ```powershell
-python main.py -dataset WESAD -Input raw_data -LM direct -output label
+python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 ```
 
 Choose the LM Studio model with `-llm`:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM few_shot -output label -llm qwen2.5-14b-instruct
+python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only -llm qwen2.5-14b-instruct
 ```
 
 Results are saved under `Results/` with this naming style:
 
 ```text
-WESAD_raw_data_direct_label_20260512213815.csv
+WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
 
 The older config-based entry point is still available:
@@ -63,7 +65,7 @@ For SensorLLM embedding/alignment inference on Windows paths with non-ASCII char
 
 ```powershell
 $env:PYTHONUTF8='1'
-python run_experiment.py --config configs/embedding_alignment_sensorllm_fold_s2_label.json
+python run_experiment.py --config configs/embedding_alignment_sensorllm_fold_s2_label_only.json
 ```
 
 ## Local Files Not Tracked
