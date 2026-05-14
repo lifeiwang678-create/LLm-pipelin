@@ -13,6 +13,18 @@ S*/
 # Generated outputs
 outputs*/
 sensorllm_wesad*/
+Results/*
+!Results/.gitkeep
+
+# Local dataset packages
+Dataset/*
+!Dataset/README.md
+!Dataset/WESAD/
+!Dataset/WESAD/.gitkeep
+!Dataset/HHAR/
+!Dataset/HHAR/.gitkeep
+!Dataset/DREAMT/
+!Dataset/DREAMT/.gitkeep
 
 # Local model checkpoints and large binary artifacts
 vicuna-7b-v1.5/
@@ -27,4 +39,3 @@ vicuna-7b-v1.5/
 # Figures and temporary analysis artifacts
 *.png
 *.pdf
-

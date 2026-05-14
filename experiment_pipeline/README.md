@@ -13,6 +13,18 @@ This folder separates the experiment into three replaceable layers:
 Run an experiment with:
 
 ```powershell
+python main.py -dataset WESAD -Input raw_data -LM direct -output label
+```
+
+`main.py` saves compact CSV files to `Results/`, for example:
+
+```text
+WESAD_raw_data_direct_label_20260512213815.csv
+```
+
+The config-based runner is still available:
+
+```powershell
 python run_experiment.py --config configs/example_experiment.json
 ```
 
@@ -45,3 +57,18 @@ For debug runs, use balanced sampling:
 ```
 
 Few-shot runs must explicitly set both `data.train_subjects` and `data.test_subjects`; overlapping subjects are rejected.
+
+## Experiment Matrix
+
+| ID | Input | LM usage | Output | Config |
+| -- | -- | -- | -- | -- |
+| E1 | `raw_data` | `direct` | `label_only` | `configs/E1_raw_direct_label_only.json` |
+| E2 | `feature_description` | `direct` | `label_only` | `configs/E2_feature_direct_label_only.json` |
+| E3 | `raw_data` | `few_shot` | `label_only` | `configs/E3_raw_fewshot_label_only.json` |
+| E4 | `feature_description` | `few_shot` | `label_only` | `configs/E4_feature_fewshot_label_only.json` |
+
+Run one experiment:
+
+```powershell
+python run_experiment.py --config configs/E1_raw_direct_label_only.json
+```

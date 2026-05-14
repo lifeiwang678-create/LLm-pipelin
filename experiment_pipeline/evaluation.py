@@ -56,11 +56,17 @@ def summarize_and_save(
 ) -> dict:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if config.get("result_filename_style") == "compact":
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     stem = f"{run_name}_{timestamp}"
 
     df = pd.DataFrame(records)
-    predictions_path = output_path / f"{stem}_predictions.csv"
+    if config.get("result_filename_style") == "compact":
+        predictions_path = output_path / f"{stem}.csv"
+    else:
+        predictions_path = output_path / f"{stem}_predictions.csv"
     metrics_path = output_path / f"{stem}_metrics.json"
     config_path = output_path / f"{stem}_config.json"
 
