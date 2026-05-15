@@ -34,6 +34,8 @@ def build_experiment_config(args: Namespace) -> dict:
         "data_dir": dataset_cfg["data_dir"],
         "loader_kwargs": loader_kwargs,
     }
+    if args.dataset == "WESAD" and args.Input == "feature_description":
+        dataset_config["loader_kwargs"]["window_sec"] = 60.0
 
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
@@ -44,6 +46,7 @@ def build_experiment_config(args: Namespace) -> dict:
         "data": data_cfg,
         "input": {
             "type": args.Input,
+            "dataset": args.dataset,
         },
         "lm_usage": {
             "type": args.LM,
@@ -77,7 +80,9 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     labels = [int(label) for label in config["labels"]]
     dataset_config = _resolve_dataset_config(config, dataset_name)
     dataset_loader = build_dataset_loader(dataset_config)
-    input_provider = build_input_provider(config["input"])
+    input_config = dict(config.get("input", {}))
+    input_config.setdefault("dataset", dataset_config.get("name"))
+    input_provider = build_input_provider(input_config)
     output_handler = build_output_handler(config["output"], labels)
     usage_type = config["lm_usage"]["type"]
 
@@ -160,13 +165,21 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
 
 
 def _resolve_dataset_config(config: dict, dataset_name: str | None) -> dict:
-    if "dataset" in config:
-        return config["dataset"]
-    if dataset_name is None:
-        raise ValueError("Dataset config is missing. Pass dataset_name or add config['dataset'].")
-    dataset_cfg = get_dataset_config(dataset_name)
+    config_dataset = dict(config.get("dataset") or {})
+    input_dataset = (config.get("input") or {}).get("dataset")
+    resolved_name = config_dataset.get("name") or dataset_name or input_dataset
+    if resolved_name is None or str(resolved_name).strip() == "":
+        raise ValueError(
+            "Dataset name is required. Set config['dataset']['name'] or config['input']['dataset']."
+        )
+
+    resolved_name = str(resolved_name)
+    dataset_cfg = get_dataset_config(resolved_name)
+    config_dataset.setdefault("name", resolved_name)
+    config_dataset.setdefault("data_dir", dataset_cfg["data_dir"])
+    config_dataset.setdefault("loader_kwargs", dataset_cfg.get("loader_kwargs", {}))
     return {
-        "name": dataset_name,
-        "data_dir": dataset_cfg["data_dir"],
-        "loader_kwargs": dataset_cfg.get("loader_kwargs", {}),
+        "name": config_dataset["name"],
+        "data_dir": config_dataset["data_dir"],
+        "loader_kwargs": config_dataset["loader_kwargs"],
     }

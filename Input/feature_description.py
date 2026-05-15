@@ -1,84 +1,84 @@
 from __future__ import annotations
 
-import numpy as np
-
 from core.schema import LLMSample, SensorSample
-from core.signal_utils import describe_1d
+
+from .feature_functions import FeatureDict, extract_signal_features, format_feature_block
 
 
-SIGNAL_ORDER = [
-    "chest_ecg",
-    "chest_eda",
-    "chest_resp",
-    "chest_emg",
-    "chest_temp",
-    "chest_acc",
-    "wrist_bvp",
-    "wrist_eda",
-    "wrist_temp",
-    "wrist_acc",
-]
-
-
-def extract_feature_dict(signals: dict) -> dict[str, dict[str, float | str]]:
-    features: dict[str, dict[str, float | str]] = {}
-    for name in SIGNAL_ORDER:
-        if name not in signals:
-            continue
-        arr = np.asarray(signals[name])
-        if arr.ndim == 2 and arr.shape[1] == 3:
-            features[f"{name}_x"] = describe_1d(arr[:, 0])
-            features[f"{name}_y"] = describe_1d(arr[:, 1])
-            features[f"{name}_z"] = describe_1d(arr[:, 2])
-            features[f"{name}_magnitude"] = describe_1d(np.linalg.norm(arr, axis=1))
-        else:
-            features[name] = describe_1d(arr)
-    return features
-
-
-def format_feature_block(features: dict[str, dict[str, float | str]]) -> str:
-    lines = ["Input feature description:"]
-    for name, stats in features.items():
-        lines.append(
-            "- "
-            f"{name}: "
-            f"mean={_fmt(stats['mean'])}, "
-            f"std={_fmt(stats['std'])}, "
-            f"min={_fmt(stats['min'])}, "
-            f"max={_fmt(stats['max'])}, "
-            f"p25={_fmt(stats['p25'])}, "
-            f"p75={_fmt(stats['p75'])}, "
-            f"trend={stats['trend']}"
-        )
-    if len(lines) == 1:
-        lines.append("- no numeric signals available")
-    return "\n".join(lines)
-
-
-def _fmt(value: float | str) -> str:
-    try:
-        return f"{float(value):.3f}"
-    except (TypeError, ValueError):
-        return str(value)
-
-
-class FeatureDescriptionInput:
+class BaseFeatureDescriptionInput:
     name = "feature_description"
+    dataset_name = "generic"
+    signal_order: list[str] | None = None
+    title = "Input feature description:"
+    sections: dict[str, list[str]] | None = None
+
+    def build_input(self, sample: SensorSample) -> str:
+        features = self.extract_features(sample)
+        return self.format_features(features)
 
     def transform(self, sample: SensorSample) -> LLMSample:
         meta = dict(sample.meta)
         meta["input_type"] = self.name
-        features = extract_feature_dict(sample.signals)
+        meta["feature_description_dataset"] = self.dataset_name
         return LLMSample(
             dataset=sample.dataset,
             subject=sample.subject,
             label=sample.label,
-            input_text=format_feature_block(features),
+            input_text=self.build_input(sample),
             meta=meta,
         )
 
     def transform_all(self, samples: list[SensorSample]) -> list[LLMSample]:
         return [self.transform(sample) for sample in samples]
 
+    def extract_features(self, sample: SensorSample) -> FeatureDict:
+        return extract_signal_features(sample.signals, self.signal_order)
 
-__all__ = ["FeatureDescriptionInput", "extract_feature_dict", "format_feature_block"]
+    def format_features(self, features: FeatureDict) -> str:
+        return format_feature_block(features, title=self.title, sections=self.sections)
+
+
+class GenericFeatureDescriptionInput(BaseFeatureDescriptionInput):
+    dataset_name = "generic"
+
+
+# Backward-compatible name for code that imports FeatureDescriptionInput directly.
+FeatureDescriptionInput = GenericFeatureDescriptionInput
+
+
+def build_feature_description_input(dataset: str | None = None) -> BaseFeatureDescriptionInput:
+    if dataset is None or str(dataset).strip() == "":
+        raise ValueError("Feature description input requires config['dataset'] or config['input']['dataset'].")
+
+    key = _normalize_dataset_name(dataset)
+    if key == "WESAD":
+        from .wesad_feature_description import WESADFeatureDescriptionInput
+
+        return WESADFeatureDescriptionInput()
+    if key == "HHAR":
+        from .hhar_feature_description import HHARFeatureDescriptionInput
+
+        return HHARFeatureDescriptionInput()
+    if key == "DREAMT":
+        from .dreamt_feature_description import DreaMTFeatureDescriptionInput
+
+        return DreaMTFeatureDescriptionInput()
+    raise ValueError(f"Unknown feature description dataset: {dataset}")
+
+
+def _normalize_dataset_name(dataset: str) -> str:
+    return str(dataset).replace("-", "").replace("_", "").strip().upper()
+
+
+# Compatibility aliases for older local imports/tests.
+extract_feature_dict = extract_signal_features
+
+
+__all__ = [
+    "BaseFeatureDescriptionInput",
+    "FeatureDescriptionInput",
+    "GenericFeatureDescriptionInput",
+    "build_feature_description_input",
+    "extract_feature_dict",
+    "format_feature_block",
+]
