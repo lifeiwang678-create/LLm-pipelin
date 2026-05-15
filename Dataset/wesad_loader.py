@@ -44,7 +44,17 @@ class WESADLoader:
 
         chest = data["signal"]["chest"]
         wrist = data["signal"]["wrist"]
-        label_series = np.asarray(data["label"]).flatten()
+        label_series = np.asarray(data["label"]).ravel()
+        chest_ecg = np.asarray(chest["ECG"]).ravel()
+        chest_eda = np.asarray(chest["EDA"]).ravel()
+        chest_resp = np.asarray(chest["Resp"]).ravel()
+        chest_acc = np.asarray(chest["ACC"])
+        chest_emg = np.asarray(chest["EMG"]).ravel()
+        chest_temp = np.asarray(chest["Temp"]).ravel()
+        wrist_bvp = np.asarray(wrist["BVP"]).ravel()
+        wrist_eda = np.asarray(wrist["EDA"]).ravel()
+        wrist_temp = np.asarray(wrist["TEMP"]).ravel()
+        wrist_acc = np.asarray(wrist["ACC"])
 
         fs_chest = 700
         fs_wrist_bvp = 64
@@ -65,36 +75,36 @@ class WESADLoader:
 
             time_sec = center_idx / fs_chest
             signals = {
-                "chest_ecg": get_segment(chest["ECG"].flatten(), center_idx, self.window_sec, fs_chest),
-                "chest_eda": get_segment(chest["EDA"].flatten(), center_idx, self.window_sec, fs_chest),
-                "chest_resp": get_segment(chest["Resp"].flatten(), center_idx, self.window_sec, fs_chest),
-                "chest_acc": get_segment(chest["ACC"], center_idx, self.window_sec, fs_chest),
-                "chest_emg": get_segment(chest["EMG"].flatten(), center_idx, self.window_sec, fs_chest),
-                "chest_temp": get_segment(chest["Temp"].flatten(), center_idx, self.window_sec, fs_chest),
+                "chest_ecg": get_segment(chest_ecg, center_idx, self.window_sec, fs_chest).copy(),
+                "chest_eda": get_segment(chest_eda, center_idx, self.window_sec, fs_chest).copy(),
+                "chest_resp": get_segment(chest_resp, center_idx, self.window_sec, fs_chest).copy(),
+                "chest_acc": get_segment(chest_acc, center_idx, self.window_sec, fs_chest).copy(),
+                "chest_emg": get_segment(chest_emg, center_idx, self.window_sec, fs_chest).copy(),
+                "chest_temp": get_segment(chest_temp, center_idx, self.window_sec, fs_chest).copy(),
                 "wrist_bvp": get_segment(
-                    wrist["BVP"].flatten(),
+                    wrist_bvp,
                     int(time_sec * fs_wrist_bvp),
                     self.window_sec,
                     fs_wrist_bvp,
-                ),
+                ).copy(),
                 "wrist_eda": get_segment(
-                    wrist["EDA"].flatten(),
+                    wrist_eda,
                     int(time_sec * fs_wrist_eda),
                     self.window_sec,
                     fs_wrist_eda,
-                ),
+                ).copy(),
                 "wrist_temp": get_segment(
-                    wrist["TEMP"].flatten(),
+                    wrist_temp,
                     int(time_sec * fs_wrist_temp),
                     self.window_sec,
                     fs_wrist_temp,
-                ),
+                ).copy(),
                 "wrist_acc": get_segment(
-                    wrist["ACC"],
+                    wrist_acc,
                     int(time_sec * fs_wrist_acc),
                     self.window_sec,
                     fs_wrist_acc,
-                ),
+                ).copy(),
             }
             samples.append(
                 SensorSample(

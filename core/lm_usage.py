@@ -58,10 +58,12 @@ class FewShotUsage(LMUsage):
         examples: list[Sample],
         n_per_class: int = 2,
         random_state: int = 42,
+        example_max_chars: int | None = None,
     ) -> None:
         self.labels = labels
         self.input_name = input_name
         self.output_instructions = output_instructions
+        self.example_max_chars = example_max_chars
         self.examples = self._sample_examples(examples, n_per_class, random_state)
 
     def _sample_examples(self, examples: list[Sample], n_per_class: int, random_state: int) -> list[Sample]:
@@ -78,7 +80,7 @@ class FewShotUsage(LMUsage):
         for idx, example in enumerate(self.examples, 1):
             example_blocks.append(
                 f"""Example {idx}
-{example.input_text}
+{self._format_example_input(example.input_text)}
 
 Correct label:
 - {example.label}"""
@@ -106,6 +108,14 @@ Now classify the following sample.
 {sample.input_text}
 
 {self.output_instructions}"""
+
+    def _format_example_input(self, input_text: str) -> str:
+        if self.example_max_chars is None or len(input_text) <= self.example_max_chars:
+            return input_text
+        return (
+            input_text[: self.example_max_chars].rstrip()
+            + "\n\n[Example input truncated for few-shot context length.]"
+        )
 
 
 class MultiAgentUsage(LMUsage):
@@ -352,6 +362,7 @@ def build_lm_usage(
             examples=train_samples,
             n_per_class=int(config.get("n_per_class", 2)),
             random_state=int(config.get("random_state", 42)),
+            example_max_chars=config.get("example_max_chars"),
         )
     if kind in {"multiagent", "multi_agent", "multi-agent"}:
         return MultiAgentUsage(

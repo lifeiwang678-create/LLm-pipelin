@@ -51,6 +51,7 @@ class EmbeddingAlignmentInput:
         include_qa: bool = True,
         include_supporting_stats: bool = True,
         name: str | None = None,
+        strict: bool = False,
     ) -> None:
         self.name = self._canonical_input_name(name or "embedding_alignment")
         self.canonical_name = "embedding_alignment"
@@ -75,11 +76,12 @@ class EmbeddingAlignmentInput:
         self.sudden_change_z_threshold = float(sudden_change_z_threshold)
         self.include_qa = bool(include_qa)
         self.include_supporting_stats = bool(include_supporting_stats)
+        self.strict = bool(strict)
 
     def build_input(self, sample: SensorSample | dict) -> str:
         dataset = self._sample_dataset(sample)
-        metadata = self._load_channel_metadata(dataset, None)
-        signals = self._extract_signal_container(sample)
+        metadata = self._metadata_for_sample(dataset)
+        signals = self._flatten_signal_container(self._extract_signal_container(sample))
         blocks = []
 
         for raw_name, values in signals.items():
@@ -96,6 +98,11 @@ class EmbeddingAlignmentInput:
             "",
         ]
         if not blocks:
+            if self.strict:
+                raise ValueError(
+                    "No valid numeric sensor channels found for encoded time-series input "
+                    f"(dataset={dataset}, subject={self._sample_subject(sample)})."
+                )
             blocks = ["No valid numeric sensor channel was available for encoded time-series analysis."]
         footer = [
             "",
@@ -142,8 +149,7 @@ class EmbeddingAlignmentInput:
                 continue
 
             qa_pair = item.get("qa_pair", {})
-            label_text = qa_pair.get("A", item.get("binary_label", item.get("original_3class_label", "")))
-            label = int(self.label_map.get(label_text, item.get("majority_label_original", 0)))
+            label = self._legacy_label_for_item(item)
             if label not in labels:
                 continue
 
@@ -197,6 +203,11 @@ class EmbeddingAlignmentInput:
                 metadata[self._normalize_key(key)] = self._coerce_metadata(value)
         return metadata
 
+    def _metadata_for_sample(self, dataset: str | None) -> dict[str, ChannelMetadata]:
+        if self._normalize_dataset_name(dataset) == self._normalize_dataset_name(self.dataset):
+            return self.channel_metadata
+        return self._load_channel_metadata(dataset, None)
+
     def _expand_channel(
         self,
         raw_name: str,
@@ -206,14 +217,15 @@ class EmbeddingAlignmentInput:
         key = self._normalize_key(raw_name)
         arr = np.asarray(values, dtype=object)
 
-        if key in {"chest_acc", "wrist_acc", "acc"} and arr.ndim == 2 and arr.shape[1] >= 3:
+        if key in {"chest_acc", "wrist_acc", "acc"} and arr.ndim == 2 and (arr.shape[1] >= 3 or arr.shape[0] >= 3):
             location = "chest" if key.startswith("chest") else "wrist" if key.startswith("wrist") else "unknown"
             prefix = f"{location}_acc" if location != "unknown" else "acc"
+            axis_values = [arr[:, idx] for idx in range(3)] if arr.shape[1] >= 3 else [arr[idx, :] for idx in range(3)]
             expanded = []
-            for axis, idx in zip(["x", "y", "z"], [0, 1, 2]):
+            for axis, idx, values_1d in zip(["x", "y", "z"], [0, 1, 2], axis_values):
                 meta_key = f"{prefix}_{axis}"
                 meta = metadata.get(meta_key) or ChannelMetadata(f"ACC_{axis.upper()}", "accelerometer", location, None, idx)
-                expanded.append((meta.channel, arr[:, idx], meta))
+                expanded.append((meta.channel, values_1d, meta))
             return expanded
 
         meta = metadata.get(key) or self._infer_channel_metadata(raw_name)
@@ -464,6 +476,24 @@ class EmbeddingAlignmentInput:
         signals = getattr(sample, "signals", None)
         return signals if isinstance(signals, dict) else {}
 
+    def _flatten_signal_container(self, signals: dict) -> dict:
+        if not isinstance(signals, dict):
+            return {}
+        if isinstance(signals.get("signal"), dict):
+            signals = signals["signal"]
+
+        flat = {}
+        for raw_key, value in signals.items():
+            key = self._normalize_key(raw_key)
+            if isinstance(value, dict) and key in {"chest", "wrist"}:
+                for channel_key, channel_values in value.items():
+                    flat[f"{key}_{self._normalize_key(channel_key)}"] = channel_values
+            elif isinstance(value, dict) and key in {"signals", "data", "features", "signal"}:
+                flat.update(self._flatten_signal_container(value))
+            else:
+                flat[raw_key] = value
+        return flat
+
     def _sample_dataset(self, sample: SensorSample | dict) -> str:
         if isinstance(sample, SensorSample):
             return sample.dataset or self.dataset
@@ -507,6 +537,21 @@ class EmbeddingAlignmentInput:
                     return candidate[key]
             return candidate
         return {}
+
+    def _legacy_label_for_item(self, item: dict) -> int:
+        for key in ("label", "majority_label_original", "majority_label", "class_label", "target", "y"):
+            if key not in item:
+                continue
+            value = item[key]
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                if str(value) in self.label_map:
+                    return int(self.label_map[str(value)])
+        raise ValueError(
+            "Legacy embedding/alignment QA item is missing an explicit numeric label. "
+            "Expected one of: label, majority_label_original, majority_label, class_label, target, y."
+        )
 
     def _load_legacy_data(self) -> Any:
         if self.data_path is None or not self.data_path.exists():

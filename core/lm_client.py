@@ -37,6 +37,14 @@ class LMStudioClient:
             headers=headers,
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = response.text.strip()
+            if len(detail) > 1200:
+                detail = detail[:1200] + "..."
+            raise RuntimeError(
+                f"LM Studio request failed with HTTP {response.status_code}. "
+                f"Prompt characters: {len(prompt)}. Response: {detail}"
+            ) from exc
         return response.json()["choices"][0]["message"]["content"].strip()
-

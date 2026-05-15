@@ -40,6 +40,7 @@ def build_input_provider(config: dict):
             include_qa=bool(config.get("include_qa", True)),
             include_supporting_stats=bool(config.get("include_supporting_stats", True)),
             name=kind,
+            strict=bool(config.get("strict", False)),
         )
 
     if kind in {"extra_knowledge", "knowledge", "extra knowledge"}:

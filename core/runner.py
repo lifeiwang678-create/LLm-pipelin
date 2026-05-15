@@ -18,12 +18,21 @@ def build_experiment_config(args: Namespace) -> dict:
     long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series"}
     lm_timeout = 60 if long_input else 30
     max_tokens = 384 if long_input else 128
+    default_few_shot_n = 1 if long_input else 2
+    default_example_max_chars = 1500 if long_input else None
     loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
 
     if args.LM == "few_shot":
+        if args.subjects and not args.test_subjects:
+            raise ValueError(
+                "--subjects is only used for direct-mode evaluation. "
+                "For few_shot, use --train-subjects and --test-subjects explicitly."
+            )
+        if not args.train_subjects or not args.test_subjects:
+            raise ValueError("few_shot requires explicit --train-subjects and --test-subjects.")
         data_cfg = {
-            "train_subjects": args.train_subjects or dataset_cfg.get("train_subjects"),
-            "test_subjects": args.test_subjects or dataset_cfg.get("test_subjects"),
+            "train_subjects": args.train_subjects,
+            "test_subjects": args.test_subjects,
         }
     else:
         data_cfg = {
@@ -51,8 +60,11 @@ def build_experiment_config(args: Namespace) -> dict:
         },
         "lm_usage": {
             "type": args.LM,
-            "n_per_class": 2,
+            "n_per_class": args.few_shot_n_per_class or default_few_shot_n,
             "random_state": 42,
+            "example_max_chars": args.few_shot_example_max_chars
+            if args.few_shot_example_max_chars is not None
+            else default_example_max_chars,
         },
         "output": {
             "type": args.output,

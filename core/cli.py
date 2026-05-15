@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subjects", nargs="*", help="Direct-mode evaluation subjects.")
     parser.add_argument("--train-subjects", nargs="*", help="Few-shot training subjects.")
     parser.add_argument("--test-subjects", nargs="*", help="Few-shot testing subjects.")
+    parser.add_argument("--few-shot-n-per-class", type=int, help="Few-shot examples per label.")
+    parser.add_argument(
+        "--few-shot-example-max-chars",
+        type=int,
+        help="Maximum characters kept from each few-shot example input.",
+    )
     parser.add_argument("--balanced-per-label", type=int, default=10, help="Balanced debug samples per label.")
     parser.add_argument("--log-every", type=int, default=10, help="Progress print interval.")
     return parser.parse_args()

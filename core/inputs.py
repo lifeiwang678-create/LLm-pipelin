@@ -333,6 +333,7 @@ def build_input_provider(config: dict):
             max_points=int(config.get("max_points", 256)),
             num_segments=int(config.get("num_segments", 4)),
             name=kind,
+            strict=bool(config.get("strict", False)),
         )
     if kind in {"extra_knowledge", "knowledge", "extra knowledge"}:
         return NotImplementedInput("extra_knowledge")

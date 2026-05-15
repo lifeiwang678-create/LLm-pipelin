@@ -23,6 +23,7 @@ def build_lm_usage(
             examples=train_samples,
             n_per_class=int(config.get("n_per_class", 2)),
             random_state=int(config.get("random_state", 42)),
+            example_max_chars=config.get("example_max_chars"),
         )
 
     if kind in {"multiagent", "multi_agent", "multi-agent"}:
@@ -43,4 +44,3 @@ __all__ = [
     "MultiAgentUsage",
     "build_lm_usage",
 ]
-
