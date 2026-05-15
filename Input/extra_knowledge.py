@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
 
-from core.schema import Sample
+from core.schema import LLMSample, SensorSample
 
 from .feature_description import FeatureDescriptionInput
 
@@ -13,28 +12,28 @@ class ExtraKnowledgeInput:
 
     def __init__(
         self,
-        data_dir: str | Path,
-        pattern: str = "*_features_paperstyle.csv",
         knowledge_file: str | Path | None = None,
         knowledge_text: str = "",
     ) -> None:
-        self.base_input = FeatureDescriptionInput(data_dir=data_dir, pattern=pattern)
+        self.base_input = FeatureDescriptionInput()
         self.knowledge_file = Path(knowledge_file) if knowledge_file else None
         self.knowledge_text = knowledge_text
 
-    def load(self, subjects: Iterable[str] | None, labels: list[int]) -> list[Sample]:
-        samples = self.base_input.load(subjects, labels)
+    def transform(self, sample: SensorSample) -> LLMSample:
+        llm_sample = self.base_input.transform(sample)
         knowledge = self._load_knowledge()
         if not knowledge:
-            return samples
+            return llm_sample
 
-        for sample in samples:
-            sample.input_text = f"""{sample.input_text}
+        llm_sample.input_text = f"""{llm_sample.input_text}
 
 Extra knowledge:
 {knowledge}"""
-            sample.meta["knowledge_source"] = str(self.knowledge_file) if self.knowledge_file else "inline"
-        return samples
+        llm_sample.meta["knowledge_source"] = str(self.knowledge_file) if self.knowledge_file else "inline"
+        return llm_sample
+
+    def transform_all(self, samples: list[SensorSample]) -> list[LLMSample]:
+        return [self.transform(sample) for sample in samples]
 
     def _load_knowledge(self) -> str:
         if self.knowledge_text:

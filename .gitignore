@@ -21,6 +21,9 @@ Dataset/*
 !Dataset/README.md
 !Dataset/__init__.py
 !Dataset/registry.py
+!Dataset/wesad_loader.py
+!Dataset/hhar_loader.py
+!Dataset/dreamt_loader.py
 !Dataset/WESAD/
 !Dataset/WESAD/.gitkeep
 !Dataset/HHAR/

@@ -18,6 +18,9 @@ This repository contains a modular experiment framework for stress/activity clas
 |   |-- HHAR/
 |   |-- DREAMT/
 |   |-- registry.py
+|   |-- wesad_loader.py
+|   |-- hhar_loader.py
+|   |-- dreamt_loader.py
 |
 |-- Input/
 |   |-- raw_data.py
@@ -37,6 +40,7 @@ This repository contains a modular experiment framework for stress/activity clas
 |-- core/
 |   |-- cli.py
 |   |-- runner.py
+|   |-- signal_utils.py
 |   |-- splits.py
 |   |-- evaluation.py
 |   |-- lm_client.py
@@ -47,6 +51,22 @@ This repository contains a modular experiment framework for stress/activity clas
 |-- main.py
 |-- run_experiment.py
 ```
+
+## File Responsibilities
+
+| File | Responsibility |
+| --- | --- |
+| `Dataset/wesad_loader.py` | WESAD reading, window slicing, and sampling-rate alignment |
+| `Dataset/hhar_loader.py` | HHAR CSV reading, window slicing, and label mapping |
+| `Dataset/dreamt_loader.py` | DREAMT CSV reading, window slicing, and label mapping |
+| `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
+| `core/schema.py` | `SensorSample` and `LLMSample` data structures |
+| `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
+| `Input/feature_description.py` | Convert `SensorSample.signals` into feature-description text |
+| `LM/direct.py` | Build direct-classification prompts |
+| `Output/label_only.py` | Label-only output instruction and parser |
+| `Output/label_explanation.py` | Label + explanation output instruction and parser |
+| `core/runner.py` | Combine Dataset + Input + LM + Output |
 
 ## Supported Modules
 
@@ -127,4 +147,3 @@ The following files are intentionally not uploaded to GitHub:
 - Parser failures are saved as invalid predictions, not converted to a default label.
 - Few-shot runs must explicitly separate train and test subjects.
 - `main.py` should stay as a module-composition entry point. Put real method logic in `Input/`, `LM/`, `Output/`, or `core/`.
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from Dataset import get_dataset_config
+from Dataset import build_dataset_loader, get_dataset_config
 from Input import build_input_provider
 from LM import build_lm_usage
 from Output import build_output_handler
@@ -17,6 +17,7 @@ def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
     lm_timeout = 60 if args.Input == "raw_data" else 30
     max_tokens = 256 if args.Input == "raw_data" else 128
+    loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
 
     if args.LM == "few_shot":
         data_cfg = {
@@ -28,23 +29,22 @@ def build_experiment_config(args: Namespace) -> dict:
             "subjects": args.subjects or dataset_cfg.get("subjects"),
         }
 
-    input_cfg = {
-        "type": args.Input,
+    dataset_config = {
+        "name": args.dataset,
         "data_dir": dataset_cfg["data_dir"],
+        "loader_kwargs": loader_kwargs,
     }
-    if args.Input == "feature_description":
-        input_cfg["pattern"] = dataset_cfg["feature_pattern"]
-    if args.Input == "raw_data":
-        input_cfg["window_sec"] = 10.0
-        input_cfg["stride_sec"] = 15.0
 
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
         "labels": args.labels,
         "output_dir": "Results",
+        "dataset": dataset_config,
         "data": data_cfg,
-        "input": input_cfg,
+        "input": {
+            "type": args.Input,
+        },
         "lm_usage": {
             "type": args.LM,
             "n_per_class": 2,
@@ -75,6 +75,8 @@ def run_from_args(args: Namespace) -> dict:
 
 def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     labels = [int(label) for label in config["labels"]]
+    dataset_config = _resolve_dataset_config(config, dataset_name)
+    dataset_loader = build_dataset_loader(dataset_config)
     input_provider = build_input_provider(config["input"])
     output_handler = build_output_handler(config["output"], labels)
     usage_type = config["lm_usage"]["type"]
@@ -84,19 +86,21 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
 
     if usage_type == "few_shot":
         validate_fewshot_split(train_subjects, test_subjects)
-        train_samples = input_provider.load(train_subjects, labels)
-        print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
-        eval_samples = input_provider.load(test_subjects, labels)
+        train_sensor_samples = dataset_loader.load(train_subjects, labels)
+        print(f"Few-shot train label distribution: {label_distribution(train_sensor_samples)}")
+        train_samples = input_provider.transform_all(train_sensor_samples)
+        eval_sensor_samples = dataset_loader.load(test_subjects, labels)
     else:
         train_samples = []
-        eval_samples = input_provider.load(test_subjects, labels)
+        eval_sensor_samples = dataset_loader.load(test_subjects, labels)
 
     eval_cfg = config["evaluation"]
-    print(f"Label distribution before sampling: {label_distribution(eval_samples)}")
-    eval_samples = limit_samples(
-        eval_samples,
+    print(f"Label distribution before sampling: {label_distribution(eval_sensor_samples)}")
+    eval_sensor_samples = limit_samples(
+        eval_sensor_samples,
         balanced_per_label=eval_cfg.get("balanced_per_label"),
     )
+    eval_samples = input_provider.transform_all(eval_sensor_samples)
     print(f"Label distribution after sampling: {label_distribution(eval_samples)}")
     if not eval_samples:
         raise RuntimeError("No evaluation samples found.")
@@ -110,8 +114,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     )
     client = LMStudioClient(**config["lm_client"])
 
-    if dataset_name:
-        print(f"Dataset: {dataset_name}")
+    print(f"Dataset: {dataset_loader.name}")
     print(f"Input: {input_provider.name}")
     print(f"LM usage: {lm_usage.name}")
     print(f"Output: {output_handler.name}")
@@ -155,3 +158,15 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     print(f"Results: {Path(metrics['predictions_path'])}")
     return metrics
 
+
+def _resolve_dataset_config(config: dict, dataset_name: str | None) -> dict:
+    if "dataset" in config:
+        return config["dataset"]
+    if dataset_name is None:
+        raise ValueError("Dataset config is missing. Pass dataset_name or add config['dataset'].")
+    dataset_cfg = get_dataset_config(dataset_name)
+    return {
+        "name": dataset_name,
+        "data_dir": dataset_cfg["data_dir"],
+        "loader_kwargs": dataset_cfg.get("loader_kwargs", {}),
+    }
