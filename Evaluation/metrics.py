@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
-from core.schema import Sample, target_names
+from core.schema import Sample, label_names_for_dataset, target_names
 
 
 def label_distribution(samples: list[Sample]) -> dict[int, int]:
@@ -75,6 +75,7 @@ def summarize_and_save(
 
     valid_df = df[df["valid"] == True].copy() if "valid" in df.columns else df.copy()
     invalid_count = int(len(df) - len(valid_df))
+    dataset = _dataset_name_from_config(config)
 
     if len(valid_df) > 0:
         y_true = valid_df["y_true"].astype(int).tolist()
@@ -83,7 +84,7 @@ def summarize_and_save(
             y_true,
             y_pred,
             labels=labels,
-            target_names=target_names(labels),
+            target_names=target_names(labels, dataset),
             digits=4,
             output_dict=True,
             zero_division=0,
@@ -98,14 +99,26 @@ def summarize_and_save(
         macro_f1 = None
         weighted_f1 = None
         conf_mat = []
+    label_names = label_names_for_dataset(dataset)
+    all_sample_metrics = _all_sample_metrics_invalid_as_wrong(df, labels)
 
     metrics = {
         "accuracy": accuracy,
         "macro_f1": macro_f1,
         "weighted_f1": weighted_f1,
+        "accuracy_valid_only": accuracy,
+        "macro_f1_valid_only": macro_f1,
+        "weighted_f1_valid_only": weighted_f1,
+        "accuracy_all_samples_invalid_as_wrong": all_sample_metrics["accuracy"],
+        "macro_f1_all_samples_invalid_as_wrong": all_sample_metrics["macro_f1"],
+        "weighted_f1_all_samples_invalid_as_wrong": all_sample_metrics["weighted_f1"],
         "confusion_matrix": conf_mat,
+        "confusion_matrix_valid_only": conf_mat,
+        "confusion_matrix_all_samples_invalid_as_wrong": all_sample_metrics["confusion_matrix"],
         "confusion_matrix_labels": labels,
+        "confusion_matrix_label_names": [label_names.get(label, str(label)) for label in labels],
         "classification_report": report,
+        "classification_report_valid_only": report,
         "n_samples": len(records),
         "valid_count": int(len(valid_df)),
         "invalid_count": invalid_count,
@@ -117,3 +130,47 @@ def summarize_and_save(
     config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
     metrics["metrics_path"] = str(metrics_path)
     return metrics
+
+
+def _all_sample_metrics_invalid_as_wrong(df: pd.DataFrame, labels: list[int]) -> dict:
+    if len(df) == 0:
+        return {
+            "accuracy": None,
+            "macro_f1": None,
+            "weighted_f1": None,
+            "confusion_matrix": [],
+        }
+
+    y_true = df["y_true"].astype(int).tolist()
+    y_pred: list[int] = []
+    for row in df.itertuples(index=False):
+        if bool(getattr(row, "valid", True)):
+            y_pred.append(int(getattr(row, "y_pred")))
+        else:
+            y_pred.append(_wrong_label_for(int(getattr(row, "y_true")), labels))
+
+    return {
+        "accuracy": accuracy_score(y_true, y_pred),
+        "macro_f1": f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0),
+        "weighted_f1": f1_score(y_true, y_pred, labels=labels, average="weighted", zero_division=0),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
+    }
+
+
+def _wrong_label_for(true_label: int, labels: list[int]) -> int:
+    for label in labels:
+        if label != true_label:
+            return label
+    return true_label
+
+
+def _dataset_name_from_config(config: dict) -> str | None:
+    dataset = config.get("dataset")
+    if isinstance(dataset, dict):
+        return dataset.get("name")
+    if isinstance(dataset, str):
+        return dataset
+    input_config = config.get("input")
+    if isinstance(input_config, dict):
+        return input_config.get("dataset")
+    return None

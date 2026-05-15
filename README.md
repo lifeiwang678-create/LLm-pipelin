@@ -61,7 +61,18 @@ This repository contains a modular experiment framework for stress/activity clas
 |-- configs/
 |-- main.py
 |-- run_experiment.py
+|-- requirements.txt
 ```
+
+## Installation
+
+Install the Python dependencies first:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Core dependencies include `numpy`, `pandas`, `scikit-learn`, `requests`, `PyYAML`, `scipy`, and `neurokit2`.
 
 ## File Responsibilities
 
@@ -71,7 +82,7 @@ This repository contains a modular experiment framework for stress/activity clas
 | `Dataset/hhar_loader.py` | HHAR CSV reading, window slicing, and label mapping |
 | `Dataset/dreamt_loader.py` | DREAMT CSV reading, window slicing, and label mapping |
 | `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
-| `core/schema.py` | `SensorSample` and `LLMSample` data structures |
+| `core/schema.py` | `SensorSample`, `LLMSample`, and dataset-specific label names |
 | `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
 | `Input/embedding_alignment.py` | Convert `SensorSample.signals` into SensorLLM-inspired encoded time-series text |
 | `Input/feature_description/factory.py` | Dataset-aware Feature Description selector |
@@ -85,6 +96,18 @@ This repository contains a modular experiment framework for stress/activity clas
 | `Output/label_explanation.py` | Label + explanation output instruction and parser |
 | `Evaluation/metrics.py` | Accuracy, Macro-F1, Weighted-F1, confusion matrix, and result saving |
 | `core/runner.py` | Shared experiment executor that combines Dataset + Input + LM + Output + Evaluation |
+
+## Dataset-Specific Labels
+
+Label names are dataset-specific and are used in both prompts and evaluation reports.
+
+| Dataset | Label 1 | Label 2 | Label 3 |
+| --- | --- | --- | --- |
+| `WESAD` | Baseline | Stress | Amusement |
+| `HHAR` | Static activity | Dynamic activity | Stairs activity |
+| `DREAMT` | Baseline/Neutral/Relax | Stress | Amusement/Happy |
+
+The numeric label IDs remain the output target. The names are descriptive text for prompts, reports, and confusion-matrix readability.
 
 ## Supported Modules
 
@@ -116,6 +139,8 @@ Run with explicit dataset, input, LM usage, and output:
 python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 ```
 
+By default, `main.py` evaluates all loaded samples for the selected subjects. Use `--balanced-per-label` only for debug subsets.
+
 Feature-description few-shot example:
 
 ```powershell
@@ -139,6 +164,13 @@ Results are saved under `Results/` using this naming style:
 ```text
 WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
+
+The metrics JSON includes:
+
+- Valid-only Accuracy / Macro-F1 / Weighted-F1
+- All-samples Accuracy / Macro-F1 / Weighted-F1 with invalid predictions counted as wrong
+- Valid-only and all-samples confusion matrices
+- Invalid prediction count and invalid rate
 
 ## Batch / Config Runner
 
@@ -170,6 +202,15 @@ The default LM usage remains prompt-based direct/few-shot/multi-agent prediction
 
 The official 4 x 3 x 2 experiment path supports the registered `LM/` methods: `direct`, `few_shot`, and `multi_agent`.
 
+All LM prompts use a prompt-scoped knowledge rule:
+
+```text
+Use only the information provided in this prompt.
+Do not use knowledge outside the provided prompt.
+```
+
+This keeps `raw_data`, `feature_description`, `encoded_time_series`, and `extra_knowledge` compatible.
+
 ## Local Files Not Tracked
 
 The following files are intentionally not uploaded to GitHub:
@@ -185,4 +226,5 @@ The following files are intentionally not uploaded to GitHub:
 
 - Parser failures are saved as invalid predictions, not converted to a default label.
 - Few-shot runs must explicitly separate train and test subjects.
+- Few-shot runs require at least `n_per_class` training examples for every label in `labels`; otherwise the run stops with a clear error.
 - `main.py` should stay as a module-composition entry point. Put real method logic in `Input/`, `LM/`, `Output/`, or `core/`.

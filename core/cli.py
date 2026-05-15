@@ -29,6 +29,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Maximum characters kept from each few-shot example input.",
     )
-    parser.add_argument("--balanced-per-label", type=int, default=10, help="Balanced debug samples per label.")
+    parser.add_argument("--balanced-per-label", type=int, default=None, help="Optional balanced debug samples per label.")
     parser.add_argument("--log-every", type=int, default=10, help="Progress print interval.")
     return parser.parse_args()

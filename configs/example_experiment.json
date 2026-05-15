@@ -1,5 +1,5 @@
 {
-  "run_name": "wesad_feature_direct_label",
+  "run_name": "wesad_feature_direct_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
   "data": {

@@ -154,6 +154,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         input_name=input_provider.name,
         train_samples=train_samples,
         output_instructions=output_handler.instructions(labels),
+        dataset=dataset_loader.name,
     )
     client = LMStudioClient(**config["lm_client"])
 
@@ -196,16 +197,32 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         config=config,
     )
     print("=" * 50)
-    if metrics["accuracy"] is None:
-        print("Accuracy: n/a (no valid predictions)")
-        print("Macro-F1: n/a")
-        print("Weighted-F1: n/a")
+    if metrics["accuracy_valid_only"] is None:
+        print("Accuracy valid-only: n/a (no valid predictions)")
+        print("Macro-F1 valid-only: n/a")
+        print("Weighted-F1 valid-only: n/a")
     else:
-        print(f"Accuracy: {metrics['accuracy'] * 100:.2f}%")
-        print(f"Macro-F1: {metrics['macro_f1']:.4f}")
-        print(f"Weighted-F1: {metrics['weighted_f1']:.4f}")
+        print(f"Accuracy valid-only: {metrics['accuracy_valid_only'] * 100:.2f}%")
+        print(f"Macro-F1 valid-only: {metrics['macro_f1_valid_only']:.4f}")
+        print(f"Weighted-F1 valid-only: {metrics['weighted_f1_valid_only']:.4f}")
+    if metrics["accuracy_all_samples_invalid_as_wrong"] is None:
+        print("Accuracy all-samples invalid-as-wrong: n/a")
+        print("Macro-F1 all-samples invalid-as-wrong: n/a")
+        print("Weighted-F1 all-samples invalid-as-wrong: n/a")
+    else:
+        print(
+            "Accuracy all-samples invalid-as-wrong: "
+            f"{metrics['accuracy_all_samples_invalid_as_wrong'] * 100:.2f}%"
+        )
+        print(f"Macro-F1 all-samples invalid-as-wrong: {metrics['macro_f1_all_samples_invalid_as_wrong']:.4f}")
+        print(f"Weighted-F1 all-samples invalid-as-wrong: {metrics['weighted_f1_all_samples_invalid_as_wrong']:.4f}")
     print(f"Confusion matrix labels: {metrics['confusion_matrix_labels']}")
-    print(f"Confusion matrix: {metrics['confusion_matrix']}")
+    print(f"Confusion matrix label names: {metrics['confusion_matrix_label_names']}")
+    print(f"Confusion matrix valid-only: {metrics['confusion_matrix_valid_only']}")
+    print(
+        "Confusion matrix all-samples invalid-as-wrong: "
+        f"{metrics['confusion_matrix_all_samples_invalid_as_wrong']}"
+    )
     print(f"Invalid predictions: {metrics['invalid_count']}/{metrics['n_samples']}")
     print(f"Results: {Path(metrics['predictions_path'])}")
     return metrics

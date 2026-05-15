@@ -1,4 +1,4 @@
-# Modular WESAD LLM Experiments
+# Modular LLM Experiments
 
 This folder contains shared orchestration code for the modular experiment framework:
 
@@ -6,12 +6,20 @@ This folder contains shared orchestration code for the modular experiment framew
 - `runner.py` is the only experiment execution path.
 - `main.py` parses command-line arguments and calls `core.runner`.
 - `run_experiment.py` reads JSON/YAML configs, expands optional grids, and calls the same `core.runner`.
-- `inputs.py`, `lm_usage.py`, and `outputs.py` are legacy compatibility files and are not used as an independent experiment path.
+- `inputs.py`, `lm_usage.py`, and `outputs.py` are compatibility forwarding modules. They re-export the official top-level modules and keep no independent experiment logic.
 
 Run an experiment with:
 
 ```powershell
 python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
+```
+
+By default, `main.py` does not sample or balance the evaluation set. Add `--balanced-per-label` only for debug runs.
+
+Install dependencies from the repository root before running experiments:
+
+```powershell
+pip install -r requirements.txt
 ```
 
 `main.py` saves compact CSV files to `Results/`, for example:
@@ -38,11 +46,32 @@ Change combinations by editing the config:
 
 For 3-class experiments, change `labels` to `[1, 2, 3]`.
 
+Label names are selected by dataset:
+
+| Dataset | Label 1 | Label 2 | Label 3 |
+| -- | -- | -- | -- |
+| `WESAD` | Baseline | Stress | Amusement |
+| `HHAR` | Static activity | Dynamic activity | Stairs activity |
+| `DREAMT` | Baseline/Neutral/Relax | Stress | Amusement/Happy |
+
+These names are used in LM prompts and in `classification_report`; predictions still use numeric label IDs.
+
 `embedding_alignment` / `encoded_time_series` is a SensorLLM-inspired prompt-compatible input.
 It describes channel-aware temporal patterns in text and stays inside the official prompt-compatible 4 x 3 x 2 framework.
 `extra_knowledge` is implemented in the official `Input/extra_knowledge.py` module.
 
 Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
+
+Evaluation metrics include valid-only Accuracy / Macro-F1 / Weighted-F1 and all-samples Accuracy / Macro-F1 / Weighted-F1 where invalid predictions are counted as wrong. Both valid-only and all-samples confusion matrices are saved.
+
+LM prompts use prompt-scoped knowledge constraints:
+
+```text
+Use only the information provided in this prompt.
+Do not use knowledge outside the provided prompt.
+```
+
+This avoids conflicts when `extra_knowledge` includes dataset/channel knowledge inside the prompt.
 
 For debug runs, use balanced sampling:
 
@@ -56,6 +85,7 @@ For debug runs, use balanced sampling:
 ```
 
 Few-shot runs must explicitly set both `data.train_subjects` and `data.test_subjects`; overlapping subjects are rejected.
+Few-shot also requires at least `n_per_class` training examples for every label in `labels`; insufficient examples raise a clear error instead of silently producing an imbalanced prompt.
 
 ## Experiment Matrix
 

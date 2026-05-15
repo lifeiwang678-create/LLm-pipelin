@@ -9,11 +9,17 @@ def build_lm_usage(
     input_name: str,
     train_samples,
     output_instructions: str,
+    dataset: str | None = None,
 ):
     kind = str(config.get("type", "direct")).lower()
 
     if kind == "direct":
-        return DirectUsage(labels=labels, input_name=input_name, output_instructions=output_instructions)
+        return DirectUsage(
+            labels=labels,
+            input_name=input_name,
+            output_instructions=output_instructions,
+            dataset=dataset,
+        )
 
     if kind in {"fewshot", "few_shot", "few-shot"}:
         return FewShotUsage(
@@ -24,6 +30,7 @@ def build_lm_usage(
             n_per_class=int(config.get("n_per_class", 2)),
             random_state=int(config.get("random_state", 42)),
             example_max_chars=config.get("example_max_chars"),
+            dataset=dataset,
         )
 
     if kind in {"multiagent", "multi_agent", "multi-agent"}:
@@ -33,6 +40,7 @@ def build_lm_usage(
             output_instructions=output_instructions,
             agents=config.get("agents"),
             final_decider=config.get("final_decider", "final_decision_agent"),
+            dataset=dataset,
         )
 
     raise ValueError(f"Unknown LM usage type: {kind}")

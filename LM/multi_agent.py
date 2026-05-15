@@ -13,10 +13,12 @@ class MultiAgentUsage:
         output_instructions: str,
         agents: list[str] | None = None,
         final_decider: str = "final_decision_agent",
+        dataset: str | None = None,
     ) -> None:
         self.labels = labels
         self.input_name = input_name
         self.output_instructions = output_instructions
+        self.dataset = dataset
         self.agents = agents or [
             "evidence_extraction_agent",
             "candidate_evaluation_agent",
@@ -32,15 +34,15 @@ Task:
 Classify the state of this sample using the selected input representation: {self.input_name}.
 
 Labels:
-{label_block(self.labels)}
+{label_block(self.labels, self.dataset)}
 
 Agents:
 {agent_lines}
 - {self.final_decider}: compare the agents' conclusions and choose the final label.
 
 Important constraints:
-- Use only the provided sample content.
-- Do not use external knowledge outside the provided prompt.
+- Use only the information provided in this prompt.
+- Do not use knowledge outside the provided prompt.
 - Keep any reasoning internal unless the selected output format asks for explanation.
 - The final answer must follow the requested JSON schema.
 
@@ -79,7 +81,7 @@ Selected input representation:
 {self.input_name}
 
 Labels:
-{label_block(self.labels)}
+{label_block(self.labels, self.dataset)}
 
 Allowed evidence sources:
 - raw signal values
@@ -91,8 +93,8 @@ Allowed evidence sources:
 - retrieved evidence if included in the prompt
 
 Constraints:
-- Use only the provided sample content.
-- Do not use external knowledge outside the provided prompt.
+- Use only the information provided in this prompt.
+- Do not use knowledge outside the provided prompt.
 - Do not invent sensor values, features, labels, or retrieved examples.
 - Current sample features are primary evidence.
 - Dataset knowledge is supporting context only.
@@ -125,7 +127,7 @@ Task:
 Evaluate each allowed label using the extracted evidence.
 
 Labels:
-{label_block(self.labels)}
+{label_block(self.labels, self.dataset)}
 
 Constraints:
 - Consider only labels from the allowed label set.
@@ -133,8 +135,8 @@ Constraints:
 - Do not rely on one isolated feature alone.
 - Down-weight weakly supported labels.
 - If evidence is insufficient, state uncertainty.
-- Use only the sample content and Agent 1 evidence below.
-- Do not use external knowledge outside the provided prompt.
+- Use only the information provided in this prompt.
+- Do not use knowledge outside the provided prompt.
 - Output JSON only.
 
 Sample content:
@@ -177,7 +179,7 @@ Task:
 Choose the final label for the sample using the provided sample content and previous agent outputs.
 
 Labels:
-{label_block(self.labels)}
+{label_block(self.labels, self.dataset)}
 
 Critical constraints:
 - Produce the final answer only.
@@ -185,7 +187,7 @@ Critical constraints:
 - Do not output intermediate agent notes.
 - Do not output anything outside the required JSON format.
 - Consider only labels from the allowed label set.
-- Do not use external knowledge outside the provided prompt.
+- Do not use knowledge outside the provided prompt.
 - Predict only the final label for the current sample.
 
 Sample content:

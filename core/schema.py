@@ -2,10 +2,24 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-LABEL_NAMES = {
-    1: "Baseline",
-    2: "Stress",
-    3: "Amusement",
+DEFAULT_LABEL_DATASET = "WESAD"
+
+LABEL_NAMES_BY_DATASET = {
+    "WESAD": {
+        1: "Baseline",
+        2: "Stress",
+        3: "Amusement",
+    },
+    "HHAR": {
+        1: "Static activity",
+        2: "Dynamic activity",
+        3: "Stairs activity",
+    },
+    "DREAMT": {
+        1: "Baseline/Neutral/Relax",
+        2: "Stress",
+        3: "Amusement/Happy",
+    },
 }
 
 
@@ -31,9 +45,20 @@ class LLMSample:
 Sample = LLMSample
 
 
-def label_block(labels: list[int]) -> str:
-    return "\n".join(f"- {label} = {LABEL_NAMES.get(label, str(label))}" for label in labels)
+def label_names_for_dataset(dataset: str | None = None) -> dict[int, str]:
+    normalized = _normalize_dataset_name(dataset or DEFAULT_LABEL_DATASET)
+    return LABEL_NAMES_BY_DATASET.get(normalized, {})
 
 
-def target_names(labels: list[int]) -> list[str]:
-    return [f"{LABEL_NAMES.get(label, str(label))} ({label})" for label in labels]
+def label_block(labels: list[int], dataset: str | None = None) -> str:
+    names = label_names_for_dataset(dataset)
+    return "\n".join(f"- {label} = {names.get(label, str(label))}" for label in labels)
+
+
+def target_names(labels: list[int], dataset: str | None = None) -> list[str]:
+    names = label_names_for_dataset(dataset)
+    return [f"{names.get(label, str(label))} ({label})" for label in labels]
+
+
+def _normalize_dataset_name(dataset: str | None) -> str:
+    return str(dataset or "").replace("-", "").replace("_", "").strip().upper()
