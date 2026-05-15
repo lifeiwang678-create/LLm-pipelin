@@ -1,137 +1,172 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
-from core.evaluation import label_distribution, limit_samples, summarize_and_save
-from core.inputs import build_input_provider
-from core.lm_client import LMStudioClient
-from core.lm_usage import build_lm_usage
-from core.outputs import build_output_handler
-from core.splits import validate_fewshot_split
+from core.runner import run_experiment
 
 
 def load_config(path: str | Path) -> dict:
     config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as f:
-        config = json.load(f)
+    text = config_path.read_text(encoding="utf-8")
+    suffix = config_path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise RuntimeError("YAML config files require PyYAML. Use JSON or install PyYAML.") from exc
+        config = yaml.safe_load(text)
+    else:
+        config = json.loads(text)
+    if not isinstance(config, dict):
+        raise ValueError("Experiment config must be a JSON/YAML object.")
     config["_config_path"] = str(config_path)
     return config
 
 
-def choose_subject_split(config: dict) -> tuple[list[str] | None, list[str] | None]:
-    data_cfg = config.get("data", {})
-    train_subjects = data_cfg.get("train_subjects")
-    test_subjects = data_cfg.get("test_subjects") or data_cfg.get("subjects")
-    return train_subjects, test_subjects
+def expand_experiment_configs(config: dict) -> list[dict]:
+    """Expand one config file into concrete experiments for the shared runner."""
+    base = _base_config(config)
+
+    if "experiments" in config:
+        experiments = config["experiments"]
+        if not isinstance(experiments, list):
+            raise ValueError("config['experiments'] must be a list.")
+        return [_standardize_config(_deep_merge(base, item)) for item in experiments]
+
+    if "grid" in config:
+        return [_standardize_config(item) for item in _expand_grid(base, config["grid"])]
+
+    return [_standardize_config(base)]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a modular WESAD LLM experiment.")
-    parser.add_argument("--config", default="configs/example_experiment.json", help="Path to JSON config.")
+    parser = argparse.ArgumentParser(description="Run batch/config modular LLM experiments.")
+    parser.add_argument("--config", default="configs/example_experiment.json", help="Path to JSON or YAML config.")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    labels = [int(label) for label in config.get("labels", [1, 2])]
-    input_provider = build_input_provider(config.get("input", {}))
-    output_handler = build_output_handler(config.get("output", {}), labels)
+    experiments = expand_experiment_configs(config)
+    for idx, experiment_config in enumerate(experiments, 1):
+        print(f"[experiment {idx}/{len(experiments)}] {experiment_config.get('run_name', 'unnamed')}")
+        run_experiment(experiment_config)
 
-    train_subjects, test_subjects = choose_subject_split(config)
-    usage_type = str(config.get("lm_usage", {}).get("type", "direct")).lower()
 
-    if usage_type in {"fewshot", "few_shot", "few-shot"}:
-        validate_fewshot_split(train_subjects, test_subjects)
-        train_samples = input_provider.load(train_subjects, labels)
-        if not train_samples:
-            raise RuntimeError("Few-shot mode needs non-empty training samples.")
-        print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
-        eval_samples = input_provider.load(test_subjects, labels)
-        example_subjects = {sample.subject for sample in train_samples}
-        leaked_subjects = sorted(example_subjects & set(test_subjects))
-        if leaked_subjects:
-            raise ValueError(f"few_shot leakage after loading samples: {leaked_subjects}")
-    else:
-        train_samples = []
-        eval_samples = input_provider.load(test_subjects, labels)
+def _base_config(config: dict) -> dict:
+    base = deepcopy(config.get("base", {}))
+    for key, value in config.items():
+        if key not in {"base", "experiments", "grid"}:
+            base[key] = deepcopy(value)
+    return base
 
-    eval_cfg = config.get("evaluation", {})
-    print(f"Label distribution before sampling: {label_distribution(eval_samples)}")
-    eval_samples = limit_samples(
-        eval_samples,
-        limit=eval_cfg.get("sample_limit"),
-        per_subject_limit=eval_cfg.get("per_subject_limit"),
-        balanced_per_label=eval_cfg.get("balanced_per_label"),
-    )
-    sampled_distribution = label_distribution(eval_samples)
-    print(f"Label distribution after sampling: {sampled_distribution}")
-    if eval_cfg.get("balanced_per_label") is not None:
-        expected = int(eval_cfg["balanced_per_label"])
-        short = {label: sampled_distribution.get(label, 0) for label in labels if sampled_distribution.get(label, 0) != expected}
-        if short:
-            raise RuntimeError(
-                f"Balanced debug subset failed. Expected {expected} samples per label, got {short}."
-            )
-    if not eval_samples:
-        raise RuntimeError("No evaluation samples found for this configuration.")
 
-    lm_usage = build_lm_usage(
-        config.get("lm_usage", {}),
-        labels=labels,
-        input_name=input_provider.name,
-        train_samples=train_samples,
-        output_instructions=output_handler.instructions(labels),
-    )
-    client = LMStudioClient(**config.get("lm_client", {}))
+def _expand_grid(base: dict, grid: dict) -> list[dict]:
+    if not isinstance(grid, dict):
+        raise ValueError("config['grid'] must be a dictionary.")
+    keys = list(grid)
+    value_lists = [_as_list(grid[key]) for key in keys]
+    experiments = []
+    for values in itertools.product(*value_lists):
+        experiment = deepcopy(base)
+        for key, value in zip(keys, values):
+            experiment = _deep_merge(experiment, _grid_override(key, value))
+        experiment.setdefault("run_name", _grid_run_name(experiment))
+        experiments.append(experiment)
+    return experiments
 
-    print(f"Input: {input_provider.name}")
-    print(f"LM usage: {lm_usage.name}")
-    print(f"Output: {output_handler.name}")
-    print(f"Eval samples: {len(eval_samples)}")
 
-    records = []
-    total = len(eval_samples)
-    for idx, sample in enumerate(eval_samples, 1):
-        if hasattr(lm_usage, "predict"):
-            parsed = lm_usage.predict(sample)
-            raw_response = parsed.get("raw_response", "")
+def _grid_override(key: str, value: Any) -> dict:
+    normalized = key.strip()
+    lowered = normalized.lower()
+
+    if "." in normalized:
+        return _dotted_override(normalized, value)
+
+    if lowered in {"dataset", "dataset_name"}:
+        return {"dataset": value if isinstance(value, dict) else {"name": value}}
+    if lowered in {"input", "input_type", "input_method"}:
+        return {"input": value if isinstance(value, dict) else {"type": value}}
+    if lowered in {"lm", "lm_usage", "lm_usage_type", "lm_method"}:
+        return {"lm_usage": value if isinstance(value, dict) else {"type": value}}
+    if lowered in {"output", "output_type", "output_format"}:
+        return {"output": value if isinstance(value, dict) else {"type": value}}
+    return {normalized: value}
+
+
+def _dotted_override(key: str, value: Any) -> dict:
+    parts = [part for part in key.split(".") if part]
+    if not parts:
+        raise ValueError("Grid key cannot be empty.")
+    result: Any = value
+    for part in reversed(parts):
+        result = {part: result}
+    return result
+
+
+def _standardize_config(config: dict) -> dict:
+    standardized = deepcopy(config)
+    if _dataset_name(standardized) is None:
+        # Existing JSON configs in this repository were WESAD-only and did not
+        # carry a dataset block. Keep them usable while new configs stay explicit.
+        input_data_dir = (standardized.get("input") or {}).get("data_dir", ".")
+        standardized["dataset"] = {"name": "WESAD", "data_dir": input_data_dir}
+    _carry_legacy_input_loader_settings(standardized)
+    return standardized
+
+
+def _carry_legacy_input_loader_settings(config: dict) -> None:
+    dataset = config.get("dataset")
+    if not isinstance(dataset, dict):
+        return
+    input_config = config.get("input") or {}
+    if "data_dir" not in dataset and input_config.get("data_dir"):
+        dataset["data_dir"] = input_config["data_dir"]
+    loader_kwargs = dict(dataset.get("loader_kwargs") or {})
+    for key in ("window_sec", "stride_sec", "window_size", "stride_size", "label_map"):
+        if key in input_config:
+            loader_kwargs.setdefault(key, input_config[key])
+    if loader_kwargs:
+        dataset["loader_kwargs"] = loader_kwargs
+
+
+def _dataset_name(config: dict) -> str | None:
+    dataset = config.get("dataset")
+    if isinstance(dataset, str) and dataset.strip():
+        return dataset
+    if isinstance(dataset, dict) and str(dataset.get("name", "")).strip():
+        return str(dataset["name"])
+    input_dataset = (config.get("input") or {}).get("dataset")
+    if input_dataset and str(input_dataset).strip():
+        return str(input_dataset)
+    return None
+
+
+def _grid_run_name(config: dict) -> str:
+    dataset = _dataset_name(config) or "UNKNOWN"
+    input_type = (config.get("input") or {}).get("type", "feature_description")
+    lm_type = (config.get("lm_usage") or {}).get("type", "direct")
+    output_type = (config.get("output") or {}).get("type", "label_only")
+    return f"{dataset}_{input_type}_{lm_type}_{output_type}"
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    if not isinstance(override, dict):
+        raise ValueError("Experiment overrides must be dictionaries.")
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
         else:
-            prompt = lm_usage.build_prompt(sample)
-            raw_response = client.complete(prompt)
-            parsed = output_handler.parse(raw_response)
-        valid = bool(parsed.get("valid", parsed.get("label") is not None))
-        pred = int(parsed["label"]) if valid else ""
-        records.append(
-            {
-                "subject": sample.subject,
-                "y_true": sample.label,
-                "y_pred": pred,
-                "valid": valid,
-                "parse_error": parsed.get("parse_error", ""),
-                "explanation": parsed.get("explanation", ""),
-                "raw_response": raw_response,
-                **sample.meta,
-            }
-        )
-
-        if idx % int(eval_cfg.get("log_every", 10)) == 0 or idx == total:
-            print(f"{idx}/{total} done")
-
-    metrics = summarize_and_save(
-        records,
-        labels=labels,
-        output_dir=config.get("output_dir", "outputs_modular"),
-        run_name=config.get("run_name", "wesad_llm"),
-        config=config,
-    )
-    print("=" * 50)
-    if metrics["accuracy"] is None:
-        print("Accuracy: n/a (no valid predictions)")
-    else:
-        print(f"Accuracy: {metrics['accuracy'] * 100:.2f}%")
-    print(f"Invalid predictions: {metrics['invalid_count']}/{metrics['n_samples']}")
-    print(f"Predictions: {metrics['predictions_path']}")
-    print(f"Metrics: {metrics['metrics_path']}")
+            merged[key] = deepcopy(value)
+    return merged
 
 
 if __name__ == "__main__":

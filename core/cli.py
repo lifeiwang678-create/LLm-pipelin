@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
         choices=["raw_data", "feature_description", "embedding_alignment", "encoded_time_series", "extra_knowledge"],
         help="Input type.",
     )
-    parser.add_argument("-LM", required=True, choices=["direct", "few_shot"], help="LM usage.")
+    parser.add_argument("-LM", required=True, choices=["direct", "few_shot", "multi_agent"], help="LM usage.")
     parser.add_argument("-output", required=True, choices=["label_only", "label_explanation"], help="Output type.")
     parser.add_argument("-llm", default="qwen2.5-14b-instruct", help="LM Studio model name.")
     parser.add_argument("--api-url", default="http://127.0.0.1:1234/v1", help="LM Studio API URL.")

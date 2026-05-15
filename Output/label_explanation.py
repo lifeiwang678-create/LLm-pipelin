@@ -20,18 +20,25 @@ Return STRICT JSON only.
 
     def parse(self, text: str) -> dict:
         label, error = self._parse_label(text)
+
         explanation = ""
-        match = re.search(r"\{.*\}", text, re.DOTALL)
+        has_explanation = False
+
+        match = re.search(r"\{.*?\}", text, re.DOTALL)
         if match:
             try:
                 obj = json.loads(match.group(0))
                 explanation = str(obj.get("explanation", "")).strip()
+                has_explanation = explanation != ""
             except json.JSONDecodeError:
                 explanation = ""
+                has_explanation = False
+
         return {
             "label": label,
             "explanation": explanation,
             "valid": label is not None,
+            "has_explanation": has_explanation,
             "parse_error": error,
         }
 

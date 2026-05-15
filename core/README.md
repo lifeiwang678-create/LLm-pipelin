@@ -1,16 +1,12 @@
 # Modular WESAD LLM Experiments
 
-This folder separates the experiment into three replaceable layers:
+This folder contains shared orchestration code for the modular experiment framework:
 
-- The top-level `Input/`, `LM/`, and `Output/` folders contain the concrete method logic used by `main.py`.
-- This `core/` folder keeps CLI parsing, module composition, shared schema, LM client, evaluation helpers, and legacy config runner support.
-- `inputs.py`: legacy config-runner input adapter.
-  Interfaces: `raw_data`, `feature_description`, `embedding_alignment` / `encoded_time_series`, `extra_knowledge`.
-  Implemented now: `raw_data`, `feature_description`, `embedding_alignment` / `encoded_time_series`.
-- `lm_usage.py`: builds the LLM prompt strategy.
-  Interfaces: `direct`, `few_shot`, `multi_agent`.
-- `outputs.py`: parses the model output.
-  Interfaces: `label_only`, `label_explanation`.
+- The official method logic lives in the top-level `Dataset/`, `Input/`, `LM/`, `Output/`, and `Evaluation/` folders.
+- `runner.py` is the only experiment execution path.
+- `main.py` parses command-line arguments and calls `core.runner`.
+- `run_experiment.py` reads JSON/YAML configs, expands optional grids, and calls the same `core.runner`.
+- `inputs.py`, `lm_usage.py`, and `outputs.py` are legacy compatibility files and are not used as an independent experiment path.
 
 Run an experiment with:
 
@@ -24,7 +20,7 @@ python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
 
-The config-based runner is still available:
+The config-based runner uses the same shared execution logic:
 
 ```powershell
 python run_experiment.py --config configs/example_experiment.json
@@ -43,8 +39,8 @@ Change combinations by editing the config:
 For 3-class experiments, change `labels` to `[1, 2, 3]`.
 
 `embedding_alignment` / `encoded_time_series` is a SensorLLM-inspired prompt-compatible input.
-It describes channel-aware temporal patterns in text and does not run SensorLLM checkpoint inference unless `lm_usage.type` is explicitly set to `sensorllm_checkpoint`.
-`extra_knowledge` remains a reserved interface in the legacy config runner.
+It describes channel-aware temporal patterns in text and stays inside the official prompt-compatible 4 x 3 x 2 framework.
+`extra_knowledge` is implemented in the official `Input/extra_knowledge.py` module.
 
 Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
 

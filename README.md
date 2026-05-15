@@ -1,11 +1,12 @@
 # Modular WESAD LLM Experiment Pipeline
 
-This repository contains a modular experiment framework for stress/activity classification. The experiment is organized into four visible parts:
+This repository contains a modular experiment framework for stress/activity classification. The experiment is organized into five visible parts:
 
 - `Dataset/`: local packaged datasets, not uploaded to GitHub
 - `Input/`: concrete input representations
 - `LM/`: concrete LLM usage strategies
 - `Output/`: concrete output parsers
+- `Evaluation/`: metrics and result saving
 
 `main.py` is intentionally thin. It only parses command-line arguments and asks `core/runner.py` to select and combine the requested modules.
 
@@ -44,6 +45,9 @@ This repository contains a modular experiment framework for stress/activity clas
 |   |-- label_only.py
 |   |-- label_explanation.py
 |
+|-- Evaluation/
+|   |-- metrics.py
+|
 |-- core/
 |   |-- cli.py
 |   |-- runner.py
@@ -79,7 +83,8 @@ This repository contains a modular experiment framework for stress/activity clas
 | `LM/direct.py` | Build direct-classification prompts |
 | `Output/label_only.py` | Label-only output instruction and parser |
 | `Output/label_explanation.py` | Label + explanation output instruction and parser |
-| `core/runner.py` | Combine Dataset + Input + LM + Output |
+| `Evaluation/metrics.py` | Accuracy, Macro-F1, Weighted-F1, confusion matrix, and result saving |
+| `core/runner.py` | Shared experiment executor that combines Dataset + Input + LM + Output + Evaluation |
 
 ## Supported Modules
 
@@ -135,23 +140,35 @@ Results are saved under `Results/` using this naming style:
 WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
 
-## Config Runner
+## Batch / Config Runner
 
-The older config-based runner is still available:
+`run_experiment.py` is a batch/config wrapper. It reads JSON or YAML configs, expands optional grids, and calls the same shared runner as `main.py`:
 
 ```powershell
 python run_experiment.py --config configs/E1_raw_direct_label_only.json
 ```
 
+Future grid configs can use this shape:
+
+```yaml
+base:
+  dataset: WESAD
+  labels: [1, 2]
+  data:
+    subjects: [S2]
+  evaluation:
+    balanced_per_label: 1
+    log_every: 1
+grid:
+  input: [raw_data, feature_description]
+  lm_usage: [direct, few_shot, multi_agent]
+  output: [label_only, label_explanation]
+```
+
 Encoded time-series can also be selected through config files with input type `embedding_alignment` or `encoded_time_series`.
 The default LM usage remains prompt-based direct/few-shot/multi-agent prediction.
 
-For the legacy full SensorLLM checkpoint path, set `lm_usage.type` explicitly to `sensorllm_checkpoint`:
-
-```powershell
-$env:PYTHONUTF8='1'
-python run_experiment.py --config configs/embedding_alignment_sensorllm_fold_s2_label_only.json
-```
+The official 4 x 3 x 2 experiment path supports the registered `LM/` methods: `direct`, `few_shot`, and `multi_agent`.
 
 ## Local Files Not Tracked
 
