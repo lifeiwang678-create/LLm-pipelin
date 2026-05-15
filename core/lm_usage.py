@@ -328,7 +328,7 @@ def build_lm_usage(
     output_instructions: str,
 ):
     kind = str(config.get("type", "direct")).lower()
-    if input_name == "embedding_alignment":
+    if kind in {"sensorllm", "sensorllm_checkpoint", "sensorllm-checkpoint"}:
         return SensorLLMCheckpointUsage(
             labels=labels,
             checkpoint_path=config.get("checkpoint_path", "sensorllm_wesad_binary_output_formal/fold_S2"),

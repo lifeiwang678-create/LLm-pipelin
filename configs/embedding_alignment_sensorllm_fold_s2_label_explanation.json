@@ -15,7 +15,7 @@
     }
   },
   "lm_usage": {
-    "type": "direct",
+    "type": "sensorllm_checkpoint",
     "checkpoint_path": "sensorllm_wesad_binary_output_formal/fold_S2",
     "pt_encoder_backbone_ckpt": "D:/models/chronos-t5-large",
     "dataset": "wesad_binary",

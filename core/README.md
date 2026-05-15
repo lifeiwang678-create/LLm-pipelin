@@ -4,9 +4,9 @@ This folder separates the experiment into three replaceable layers:
 
 - The top-level `Input/`, `LM/`, and `Output/` folders contain the concrete method logic used by `main.py`.
 - This `core/` folder keeps CLI parsing, module composition, shared schema, LM client, evaluation helpers, and legacy config runner support.
-- `inputs.py`: builds the input representation.
-  Interfaces: `raw_data`, `feature_description`, `embedding_alignment`, `extra_knowledge`.
-  Implemented now: `raw_data`, `feature_description`.
+- `inputs.py`: legacy config-runner input adapter.
+  Interfaces: `raw_data`, `feature_description`, `embedding_alignment` / `encoded_time_series`, `extra_knowledge`.
+  Implemented now: `raw_data`, `feature_description`, `embedding_alignment` / `encoded_time_series`.
 - `lm_usage.py`: builds the LLM prompt strategy.
   Interfaces: `direct`, `few_shot`, `multi_agent`.
 - `outputs.py`: parses the model output.
@@ -42,8 +42,9 @@ Change combinations by editing the config:
 
 For 3-class experiments, change `labels` to `[1, 2, 3]`.
 
-`embedding_alignment` and `extra_knowledge` are intentionally registered as interfaces first.
-Selecting either one will raise `NotImplementedError` until its `load()` method is filled in.
+`embedding_alignment` / `encoded_time_series` is a SensorLLM-inspired prompt-compatible input.
+It describes channel-aware temporal patterns in text and does not run SensorLLM checkpoint inference unless `lm_usage.type` is explicitly set to `sensorllm_checkpoint`.
+`extra_knowledge` remains a reserved interface in the legacy config runner.
 
 Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
 

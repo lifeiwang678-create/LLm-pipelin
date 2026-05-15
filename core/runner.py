@@ -15,8 +15,9 @@ from .splits import validate_fewshot_split
 
 def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
-    lm_timeout = 60 if args.Input == "raw_data" else 30
-    max_tokens = 256 if args.Input == "raw_data" else 128
+    long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series"}
+    lm_timeout = 60 if long_input else 30
+    max_tokens = 384 if long_input else 128
     loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
 
     if args.LM == "few_shot":

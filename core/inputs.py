@@ -9,6 +9,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from Input.embedding_alignment import EmbeddingAlignmentInput as PromptEmbeddingAlignmentInput
+
 from .schema import Sample
 
 
@@ -183,65 +185,7 @@ class NotImplementedInput(InputProvider):
         )
 
 
-class EmbeddingAlignmentInput(InputProvider):
-    name = "embedding_alignment"
-
-    def __init__(
-        self,
-        data_path: str | Path,
-        qa_path: str | Path,
-        label_map: dict[str, int] | None = None,
-    ) -> None:
-        self.data_path = Path(data_path)
-        self.qa_path = Path(qa_path)
-        self.label_map = label_map or {
-            "Non-stress": 1,
-            "Stress": 2,
-            "Baseline": 1,
-            "Amusement": 3,
-        }
-
-    def load(self, subjects: Iterable[str] | None, labels: list[int]) -> list[Sample]:
-        if not self.data_path.exists():
-            raise FileNotFoundError(f"Cannot find embedding/alignment data file: {self.data_path}")
-        if not self.qa_path.exists():
-            raise FileNotFoundError(f"Cannot find embedding/alignment QA file: {self.qa_path}")
-
-        subject_filter = set(subjects or [])
-        with self.qa_path.open("r", encoding="utf-8") as f:
-            qa_items = json.load(f)["dataset"]
-
-        samples = []
-        for item in qa_items:
-            subject = str(item.get("subject", ""))
-            if subject_filter and subject not in subject_filter:
-                continue
-
-            qa_pair = item.get("qa_pair", {})
-            label_text = qa_pair.get("A", item.get("binary_label", item.get("original_3class_label", "")))
-            label = int(self.label_map.get(label_text, item.get("majority_label_original", 0)))
-            if label not in labels:
-                continue
-
-            samples.append(
-                Sample(
-                    subject=subject,
-                    label=label,
-                    input_text="SensorLLM embedding/alignment input",
-                    meta={
-                        "data_path": str(self.data_path),
-                        "qa_path": str(self.qa_path),
-                        "data_index": int(item["index"]),
-                        "label_text": label_text,
-                        "question": qa_pair.get("Q", ""),
-                        "source": str(self.qa_path),
-                        "local_index": item.get("local_index"),
-                        "start_index": item.get("start_index"),
-                        "end_index": item.get("end_index"),
-                    },
-                )
-            )
-        return samples
+EmbeddingAlignmentInput = PromptEmbeddingAlignmentInput
 
 
 class FeatureDescriptionInput(InputProvider):
@@ -362,7 +306,7 @@ class RawDataInput(InputProvider):
 
 
 def build_input_provider(config: dict):
-    kind = str(config.get("type", "feature_description")).lower()
+    kind = str(config.get("type", "feature_description")).strip().lower()
     data_dir = config.get("data_dir", ".")
     if kind in {"feature", "feature_description", "description"}:
         return FeatureDescriptionInput(data_dir=data_dir, pattern=config.get("pattern", "*_features_paperstyle.csv"))
@@ -372,11 +316,23 @@ def build_input_provider(config: dict):
             window_sec=float(config.get("window_sec", 10.0)),
             stride_sec=float(config.get("stride_sec", 15.0)),
         )
-    if kind in {"embedding", "alignment", "embedding_alignment", "embedding / alignment"}:
-        return EmbeddingAlignmentInput(
+    if kind in {
+        "embedding",
+        "alignment",
+        "embedding_alignment",
+        "embedding / alignment",
+        "encoded_time_series",
+        "encoded-time-series",
+        "encoded time series",
+    }:
+        return PromptEmbeddingAlignmentInput(
+            dataset=config.get("dataset", config.get("dataset_name", "WESAD")),
             data_path=config.get("data_path", "sensorllm_wesad_binary_loso/fold_S2/eval_data.pkl"),
             qa_path=config.get("qa_path", "sensorllm_wesad_binary_loso/fold_S2/eval_qa.json"),
             label_map=config.get("label_map"),
+            max_points=int(config.get("max_points", 256)),
+            num_segments=int(config.get("num_segments", 4)),
+            name=kind,
         )
     if kind in {"extra_knowledge", "knowledge", "extra knowledge"}:
         return NotImplementedInput("extra_knowledge")

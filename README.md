@@ -69,6 +69,7 @@ This repository contains a modular experiment framework for stress/activity clas
 | `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
 | `core/schema.py` | `SensorSample` and `LLMSample` data structures |
 | `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
+| `Input/embedding_alignment.py` | Convert `SensorSample.signals` into SensorLLM-inspired encoded time-series text |
 | `Input/feature_description/factory.py` | Dataset-aware Feature Description selector |
 | `Input/feature_description/feature_functions.py` | Shared feature extraction and formatting helpers |
 | `Input/feature_description/basic_feature_description.py` | Basic Feature Description base class |
@@ -86,7 +87,7 @@ Input:
 
 - `raw_data`
 - `feature_description`
-- `embedding_alignment`
+- `embedding_alignment` / `encoded_time_series`
 - `extra_knowledge`
 
 LM usage:
@@ -122,6 +123,12 @@ Small debug run:
 python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
+Encoded time-series direct-prediction example:
+
+```powershell
+python main.py -dataset WESAD -Input encoded_time_series -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
+```
+
 Results are saved under `Results/` using this naming style:
 
 ```text
@@ -136,7 +143,10 @@ The older config-based runner is still available:
 python run_experiment.py --config configs/E1_raw_direct_label_only.json
 ```
 
-For SensorLLM embedding/alignment inference on Windows paths with non-ASCII characters:
+Encoded time-series can also be selected through config files with input type `embedding_alignment` or `encoded_time_series`.
+The default LM usage remains prompt-based direct/few-shot/multi-agent prediction.
+
+For the legacy full SensorLLM checkpoint path, set `lm_usage.type` explicitly to `sensorllm_checkpoint`:
 
 ```powershell
 $env:PYTHONUTF8='1'
