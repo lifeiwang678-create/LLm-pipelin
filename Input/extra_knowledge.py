@@ -99,13 +99,15 @@ class ExtraKnowledgeInput:
         dataset: str | None = None,
         knowledge_file: str | Path | None = None,
         knowledge_text: str = "",
-        knowledge_mode: str = "default",
+        knowledge_mode: str | None = None,
     ) -> None:
         self.dataset = dataset
-        self.base_input = self._build_base_input(dataset)
+        self._validate_dataset_name(dataset)
+        self._base_input_cache = {}
         self.knowledge_file = Path(knowledge_file) if knowledge_file else None
         self.knowledge_text = knowledge_text.strip() if knowledge_text else ""
-        self.knowledge_mode = self._normalize_knowledge_mode(knowledge_mode)
+        has_external_knowledge = bool(self.knowledge_text) or self.knowledge_file is not None
+        self.knowledge_mode = self._normalize_knowledge_mode(knowledge_mode, has_external_knowledge)
 
         if self.knowledge_file is not None and not self.knowledge_file.exists():
             raise FileNotFoundError(f"Cannot find extra knowledge file: {self.knowledge_file}")
@@ -115,12 +117,13 @@ class ExtraKnowledgeInput:
             raise ValueError("knowledge_mode='replace' requires knowledge_text or knowledge_file.")
 
     def transform(self, sample: SensorSample) -> LLMSample:
-        base_sample = self.base_input.transform(sample)
-        dataset = self._sample_dataset(sample, base_sample)
+        dataset = self._resolve_dataset(sample)
+        base_input = self._base_input_for_dataset(dataset)
+        base_sample = base_input.transform(sample)
         retrieved_examples = self._get_retrieved_examples(sample, base_sample)
 
         meta = dict(base_sample.meta)
-        meta["base_input_type"] = meta.get("input_type", self.base_input.name)
+        meta["base_input_type"] = meta.get("input_type", base_input.name)
         meta["input_type"] = self.name
         meta["knowledge_dataset"] = dataset
         meta["knowledge_mode"] = self.knowledge_mode
@@ -139,11 +142,23 @@ class ExtraKnowledgeInput:
     def transform_all(self, samples: list[SensorSample]) -> list[LLMSample]:
         return [self.transform(sample) for sample in samples]
 
-    def _build_base_input(self, dataset: str | None):
+    def _base_input_for_dataset(self, dataset: str | None):
+        normalized = self._normalize_dataset_name(dataset)
+        cache_key = normalized or "UNKNOWN"
+        if cache_key in self._base_input_cache:
+            return self._base_input_cache[cache_key]
         try:
-            return get_feature_description_builder(dataset)
-        except ValueError:
-            return BasicFeatureDescriptionInput()
+            if normalized in {"", "UNKNOWN"}:
+                base_input = BasicFeatureDescriptionInput()
+            else:
+                base_input = get_feature_description_builder(dataset)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported dataset for extra_knowledge input: {dataset}. "
+                "Expected WESAD, HHAR, DREAMT, None, or UNKNOWN."
+            ) from exc
+        self._base_input_cache[cache_key] = base_input
+        return base_input
 
     def _build_input_text(
         self,
@@ -156,27 +171,30 @@ class ExtraKnowledgeInput:
         channel_knowledge = list(knowledge["channel_knowledge"])
         decision_guidance = self._combined_decision_guidance(knowledge["decision_guidance"])
 
-        if self.knowledge_mode == "replace":
-            context = "External knowledge supplied for this run."
-            channel_knowledge = []
-            decision_guidance = BASE_DECISION_GUIDANCE
-
-        if self.knowledge_mode in {"append", "replace"} and self.external_knowledge:
-            channel_knowledge.extend(self._external_knowledge_lines(self.external_knowledge))
-
         sections = [
             "[Current Sample Feature Description]",
             feature_description.strip(),
             "",
             "[Dataset Context]",
-            context,
-            "",
-            "[Dataset / Channel Knowledge]",
-            self._format_bullets(channel_knowledge),
+            "External knowledge supplied for this run." if self.knowledge_mode == "replace" else context,
+        ]
+        if self.knowledge_mode != "replace":
+            sections.extend([
+                "",
+                "[Dataset / Channel Knowledge]",
+                self._format_bullets(channel_knowledge),
+            ])
+        if self.knowledge_mode in {"append", "replace"} and self.external_knowledge:
+            sections.extend([
+                "",
+                "[External Knowledge]",
+                self.external_knowledge,
+            ])
+        sections.extend([
             "",
             "[Decision Guidance]",
-            self._format_bullets(decision_guidance),
-        ]
+            self._format_bullets(BASE_DECISION_GUIDANCE if self.knowledge_mode == "replace" else decision_guidance),
+        ])
         if retrieved_examples:
             sections.extend([
                 "",
@@ -194,12 +212,6 @@ class ExtraKnowledgeInput:
             if item not in combined:
                 combined.append(item)
         return combined
-
-    def _external_knowledge_lines(self, text: str) -> list[str]:
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            return []
-        return ["External knowledge:"] + lines
 
     def _format_bullets(self, items: list[str]) -> str:
         if not items:
@@ -248,14 +260,31 @@ class ExtraKnowledgeInput:
             return str(self.knowledge_file)
         return "inline"
 
-    def _sample_dataset(self, sample: SensorSample, llm_sample: LLMSample) -> str:
-        return str(sample.dataset or llm_sample.dataset or self.dataset or "UNKNOWN")
+    def _resolve_dataset(self, sample: SensorSample) -> str:
+        sample_dataset = getattr(sample, "dataset", None)
+        if self._normalize_dataset_name(sample_dataset) not in {"", "UNKNOWN"}:
+            return str(sample_dataset)
+        if self._normalize_dataset_name(self.dataset) not in {"", "UNKNOWN"}:
+            return str(self.dataset)
+        return "UNKNOWN"
+
+    def _validate_dataset_name(self, dataset: str | None) -> None:
+        normalized = self._normalize_dataset_name(dataset)
+        if normalized in {"", "UNKNOWN"}:
+            return
+        if normalized not in DEFAULT_DATASET_KNOWLEDGE:
+            raise ValueError(
+                f"Unsupported dataset for extra_knowledge input: {dataset}. "
+                "Expected WESAD, HHAR, DREAMT, None, or UNKNOWN."
+            )
 
     def _normalize_dataset_name(self, dataset: str | None) -> str:
         return str(dataset or "").replace("-", "").replace("_", "").strip().upper()
 
-    def _normalize_knowledge_mode(self, knowledge_mode: str) -> str:
-        mode = str(knowledge_mode or "default").strip().lower()
+    def _normalize_knowledge_mode(self, knowledge_mode: str | None, has_external_knowledge: bool) -> str:
+        if knowledge_mode is None:
+            return "append" if has_external_knowledge else "default"
+        mode = str(knowledge_mode).strip().lower()
         if mode not in {"default", "append", "replace"}:
             raise ValueError("knowledge_mode must be one of: default, append, replace.")
         return mode

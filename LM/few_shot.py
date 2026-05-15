@@ -22,6 +22,7 @@ class FewShotUsage:
         self.input_name = input_name
         self.output_instructions = output_instructions
         self.example_max_chars = example_max_chars
+        # The caller should pass examples from the training split only.
         self.examples = self._sample_examples(examples, n_per_class, random_state)
 
     def _sample_examples(self, examples: list[Sample], n_per_class: int, random_state: int) -> list[Sample]:
@@ -31,9 +32,11 @@ class FewShotUsage:
             class_examples = [sample for sample in examples if sample.label == label]
             rng.shuffle(class_examples)
             picked.extend(class_examples[: min(n_per_class, len(class_examples))])
+        rng.shuffle(picked)
         return picked
 
     def build_prompt(self, sample: Sample) -> str:
+        # This is prompt-level few-shot in-context learning, not fine-tuning or prompt tuning.
         example_blocks = []
         for idx, example in enumerate(self.examples, 1):
             example_blocks.append(
@@ -48,20 +51,22 @@ Correct label:
 
 Task:
 Classify the state of the final sample using the selected input representation: {self.input_name}.
+The examples and the final sample use the same input representation.
 
 Labels:
 {label_block(self.labels)}
 
 Important constraints:
 - Use only the provided sample content and few-shot examples.
+- Use the examples only as label-format and decision-reference demonstrations.
 - Do not use external medical knowledge.
 - Do not add extra explanation outside JSON.
-- Process the final sample independently based on the examples.
+- Predict only the label of the final sample.
 
 Few-shot examples:
 {chr(10).join(example_blocks)}
 
-Now classify the following sample.
+Now classify the following final sample.
 
 {sample.input_text}
 
