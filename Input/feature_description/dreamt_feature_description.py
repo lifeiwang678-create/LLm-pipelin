@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core.schema import SensorSample
 
-from .feature_description import BaseFeatureDescriptionInput
+from .basic_feature_description import BaseFeatureDescriptionInput
 from .feature_functions import FeatureDict, extract_signal_features
 
 

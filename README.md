@@ -24,13 +24,16 @@ This repository contains a modular experiment framework for stress/activity clas
 |
 |-- Input/
 |   |-- raw_data.py
-|   |-- feature_description.py
-|   |-- feature_functions.py
-|   |-- wesad_feature_description.py
-|   |-- hhar_feature_description.py
-|   |-- dreamt_feature_description.py
 |   |-- embedding_alignment.py
 |   |-- extra_knowledge.py
+|   |-- feature_description/
+|       |-- __init__.py
+|       |-- factory.py
+|       |-- feature_functions.py
+|       |-- basic_feature_description.py
+|       |-- wesad_feature_description.py
+|       |-- hhar_feature_description.py
+|       |-- dreamt_feature_description.py
 |
 |-- LM/
 |   |-- direct.py
@@ -66,11 +69,12 @@ This repository contains a modular experiment framework for stress/activity clas
 | `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
 | `core/schema.py` | `SensorSample` and `LLMSample` data structures |
 | `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
-| `Input/feature_functions.py` | Shared feature extraction and formatting helpers |
-| `Input/feature_description.py` | Feature Description base class and dataset-aware factory |
-| `Input/wesad_feature_description.py` | WESAD-specific paper-style Feature Description class, based on `预处理-原始论文_4.22.py` |
-| `Input/hhar_feature_description.py` | HHAR-specific Feature Description class |
-| `Input/dreamt_feature_description.py` | DREAMT-specific Feature Description class |
+| `Input/feature_description/factory.py` | Dataset-aware Feature Description selector |
+| `Input/feature_description/feature_functions.py` | Shared feature extraction and formatting helpers |
+| `Input/feature_description/basic_feature_description.py` | Basic Feature Description base class |
+| `Input/feature_description/wesad_feature_description.py` | WESAD-specific paper-style Feature Description class, based on `preprocess_original_paper_4.22.py` |
+| `Input/feature_description/hhar_feature_description.py` | HHAR-specific Feature Description class |
+| `Input/feature_description/dreamt_feature_description.py` | DreaMT-specific Feature Description class |
 | `LM/direct.py` | Build direct-classification prompts |
 | `Output/label_only.py` | Label-only output instruction and parser |
 | `Output/label_explanation.py` | Label + explanation output instruction and parser |

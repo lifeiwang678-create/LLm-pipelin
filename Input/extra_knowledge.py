@@ -4,7 +4,7 @@ from pathlib import Path
 
 from core.schema import LLMSample, SensorSample
 
-from .feature_description import build_feature_description_input
+from .feature_description import get_feature_description_builder
 
 
 class ExtraKnowledgeInput:
@@ -16,7 +16,7 @@ class ExtraKnowledgeInput:
         knowledge_file: str | Path | None = None,
         knowledge_text: str = "",
     ) -> None:
-        self.base_input = build_feature_description_input(dataset)
+        self.base_input = get_feature_description_builder(dataset)
         self.knowledge_file = Path(knowledge_file) if knowledge_file else None
         self.knowledge_text = knowledge_text
 

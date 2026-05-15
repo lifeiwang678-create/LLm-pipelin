@@ -8,7 +8,7 @@ import neurokit2 as nk
 
 from core.schema import SensorSample
 
-from .feature_description import BaseFeatureDescriptionInput
+from .basic_feature_description import BaseFeatureDescriptionInput
 
 
 class WESADFeatureDescriptionInput(BaseFeatureDescriptionInput):

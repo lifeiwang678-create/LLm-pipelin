@@ -38,47 +38,22 @@ class BaseFeatureDescriptionInput:
         return format_feature_block(features, title=self.title, sections=self.sections)
 
 
-class GenericFeatureDescriptionInput(BaseFeatureDescriptionInput):
-    dataset_name = "generic"
+class BasicFeatureDescriptionInput(BaseFeatureDescriptionInput):
+    dataset_name = "basic"
 
 
 # Backward-compatible name for code that imports FeatureDescriptionInput directly.
-FeatureDescriptionInput = GenericFeatureDescriptionInput
+FeatureDescriptionInput = BasicFeatureDescriptionInput
 
 
-def build_feature_description_input(dataset: str | None = None) -> BaseFeatureDescriptionInput:
-    if dataset is None or str(dataset).strip() == "":
-        raise ValueError("Feature description input requires config['dataset'] or config['input']['dataset'].")
-
-    key = _normalize_dataset_name(dataset)
-    if key == "WESAD":
-        from .wesad_feature_description import WESADFeatureDescriptionInput
-
-        return WESADFeatureDescriptionInput()
-    if key == "HHAR":
-        from .hhar_feature_description import HHARFeatureDescriptionInput
-
-        return HHARFeatureDescriptionInput()
-    if key == "DREAMT":
-        from .dreamt_feature_description import DreaMTFeatureDescriptionInput
-
-        return DreaMTFeatureDescriptionInput()
-    raise ValueError(f"Unknown feature description dataset: {dataset}")
-
-
-def _normalize_dataset_name(dataset: str) -> str:
-    return str(dataset).replace("-", "").replace("_", "").strip().upper()
-
-
-# Compatibility aliases for older local imports/tests.
+# Compatibility alias for older local imports/tests.
 extract_feature_dict = extract_signal_features
 
 
 __all__ = [
     "BaseFeatureDescriptionInput",
+    "BasicFeatureDescriptionInput",
     "FeatureDescriptionInput",
-    "GenericFeatureDescriptionInput",
-    "build_feature_description_input",
     "extract_feature_dict",
     "format_feature_block",
 ]

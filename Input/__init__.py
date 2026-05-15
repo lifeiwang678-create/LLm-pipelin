@@ -1,6 +1,6 @@
 from .embedding_alignment import EmbeddingAlignmentInput
 from .extra_knowledge import ExtraKnowledgeInput
-from .feature_description import FeatureDescriptionInput, build_feature_description_input
+from .feature_description import FeatureDescriptionInput, get_feature_description_builder
 from .raw_data import RawDataInput
 
 
@@ -12,7 +12,7 @@ def build_input_provider(config: dict):
         return RawDataInput()
 
     if kind in {"feature", "feature_description", "description"}:
-        return build_feature_description_input(dataset)
+        return get_feature_description_builder(dataset)
 
     if kind in {"embedding", "alignment", "embedding_alignment", "embedding / alignment"}:
         return EmbeddingAlignmentInput(
@@ -36,6 +36,6 @@ __all__ = [
     "FeatureDescriptionInput",
     "EmbeddingAlignmentInput",
     "ExtraKnowledgeInput",
-    "build_feature_description_input",
+    "get_feature_description_builder",
     "build_input_provider",
 ]

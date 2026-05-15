@@ -8,10 +8,10 @@ import numpy as np
 from core.runner import _resolve_dataset_config
 from core.schema import SensorSample
 from Input import build_input_provider
-from Input.dreamt_feature_description import DreaMTFeatureDescriptionInput
-from Input.feature_description import build_feature_description_input
-from Input.hhar_feature_description import HHARFeatureDescriptionInput
-from Input.wesad_feature_description import WESADFeatureDescriptionInput
+from Input.feature_description import get_feature_description_builder
+from Input.feature_description.dreamt_feature_description import DreaMTFeatureDescriptionInput
+from Input.feature_description.hhar_feature_description import HHARFeatureDescriptionInput
+from Input.feature_description.wesad_feature_description import WESADFeatureDescriptionInput
 
 
 def assert_nonempty_no_label_text(text: str) -> None:
@@ -23,13 +23,13 @@ def assert_nonempty_no_label_text(text: str) -> None:
 
 
 def test_factory_returns_dataset_specific_classes() -> None:
-    assert isinstance(build_feature_description_input("WESAD"), WESADFeatureDescriptionInput)
-    assert isinstance(build_feature_description_input("HHAR"), HHARFeatureDescriptionInput)
-    assert isinstance(build_feature_description_input("DreaMT"), DreaMTFeatureDescriptionInput)
+    assert isinstance(get_feature_description_builder("WESAD"), WESADFeatureDescriptionInput)
+    assert isinstance(get_feature_description_builder("HHAR"), HHARFeatureDescriptionInput)
+    assert isinstance(get_feature_description_builder("DreaMT"), DreaMTFeatureDescriptionInput)
     assert isinstance(build_input_provider({"type": "feature_description", "dataset": "WESAD"}), WESADFeatureDescriptionInput)
 
     try:
-        build_feature_description_input("UNKNOWN")
+        get_feature_description_builder("UNKNOWN")
     except ValueError as exc:
         assert "Unknown feature description dataset" in str(exc)
     else:
@@ -152,9 +152,9 @@ def test_dreamt_feature_description_dataset_fields() -> None:
 
 def test_dataset_feature_description_modules_can_run() -> None:
     for module_name in [
-        "Input.wesad_feature_description",
-        "Input.hhar_feature_description",
-        "Input.dreamt_feature_description",
+        "Input.feature_description.wesad_feature_description",
+        "Input.feature_description.hhar_feature_description",
+        "Input.feature_description.dreamt_feature_description",
     ]:
         completed = subprocess.run(
             [sys.executable, "-m", module_name],
