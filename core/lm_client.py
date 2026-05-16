@@ -46,7 +46,7 @@ class LMStudioClient:
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
-            self._record_usage(prompt, {}, elapsed_time_sec)
+            self._record_usage(prompt, "", {}, elapsed_time_sec)
             detail = response.text.strip()
             if len(detail) > 1200:
                 detail = detail[:1200] + "..."
@@ -56,13 +56,19 @@ class LMStudioClient:
             ) from exc
 
         response_json = response.json()
-        self._record_usage(prompt, response_json.get("usage", {}) or {}, elapsed_time_sec)
-        return response_json["choices"][0]["message"]["content"].strip()
+        completion = response_json["choices"][0]["message"]["content"].strip()
+        self._record_usage(prompt, completion, response_json.get("usage", {}) or {}, elapsed_time_sec)
+        return completion
 
-    def _record_usage(self, prompt: str, usage: dict, elapsed_time_sec: float) -> None:
+    def _record_usage(self, prompt: str, completion: str, usage: dict, elapsed_time_sec: float) -> None:
         record = {
             "model": self.model,
+            "prompt_chars": len(prompt),
+            "completion_chars": len(completion),
+            "total_chars": len(prompt) + len(completion),
             "prompt_characters": len(prompt),
+            "completion_characters": len(completion),
+            "total_characters": len(prompt) + len(completion),
             "prompt_tokens": _optional_int(usage.get("prompt_tokens")),
             "completion_tokens": _optional_int(usage.get("completion_tokens")),
             "total_tokens": _optional_int(usage.get("total_tokens")),

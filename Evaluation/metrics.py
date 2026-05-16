@@ -173,6 +173,9 @@ def _wrong_label_for(true_label: int, labels: list[int]) -> int:
 def _usage_summary(df: pd.DataFrame) -> dict:
     n_samples = len(df)
     total_llm_calls = _sum_numeric_column(df, "llm_call_count", default=0)
+    total_prompt_chars = _sum_numeric_column(df, "prompt_chars", default=0)
+    total_completion_chars = _sum_numeric_column(df, "completion_chars", default=0)
+    total_chars = _sum_numeric_column(df, "total_chars", default=0)
     total_prompt_tokens = _sum_nullable_numeric_column(df, "prompt_tokens")
     total_completion_tokens = _sum_nullable_numeric_column(df, "completion_tokens")
     total_tokens = _sum_nullable_numeric_column(df, "total_tokens")
@@ -183,10 +186,16 @@ def _usage_summary(df: pd.DataFrame) -> dict:
 
     return {
         "total_llm_calls": int(total_llm_calls),
+        "total_prompt_chars": int(total_prompt_chars),
+        "total_completion_chars": int(total_completion_chars),
+        "total_chars": int(total_chars),
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens,
         "total_elapsed_time_sec": float(total_elapsed_time_sec),
+        "average_prompt_chars_per_sample": _safe_average(total_prompt_chars, n_samples),
+        "average_completion_chars_per_sample": _safe_average(total_completion_chars, n_samples),
+        "average_total_chars_per_sample": _safe_average(total_chars, n_samples),
         "average_prompt_tokens_per_sample": _safe_average(total_prompt_tokens, samples_with_token_usage),
         "average_completion_tokens_per_sample": _safe_average(total_completion_tokens, samples_with_token_usage),
         "average_total_tokens_per_sample": _safe_average(total_tokens, samples_with_token_usage),

@@ -7,6 +7,7 @@ This folder contains shared orchestration code for the modular experiment framew
 - `main.py` parses command-line arguments and calls `core.runner`.
 - `run_experiment.py` reads JSON/YAML configs, expands optional grids, and calls the same `core.runner`.
 - `inputs.py`, `lm_usage.py`, and `outputs.py` are compatibility forwarding modules. They re-export the official top-level modules and keep no independent experiment logic.
+- The legacy `experiment_pipeline/` path is removed from the maintained framework. Do not use it as an experiment entry.
 
 Run an experiment with:
 
@@ -60,12 +61,25 @@ These names are used in LM prompts and in `classification_report`; predictions s
 
 `embedding_alignment` / `encoded_time_series` is a SensorLLM-inspired prompt-compatible input.
 It describes channel-aware temporal patterns in text and stays inside the official prompt-compatible 4 x 3 x 2 framework.
+It does not train projectors, modify LLM embeddings, or replace time-series token embeddings.
 `extra_knowledge` is implemented in the official `Input/extra_knowledge.py` module.
+Its optional external-knowledge parameters are configured under `input`:
+
+```json
+{
+  "input": {
+    "type": "extra_knowledge",
+    "knowledge_mode": "append",
+    "knowledge_file": "local_knowledge.txt",
+    "knowledge_text": ""
+  }
+}
+```
 
 Parsing failures are not converted to a default label. They are saved as invalid predictions, excluded from valid-only metrics, and counted as wrong in all-samples metrics.
 
 Evaluation metrics include valid-only Accuracy / Macro-F1 / Weighted-F1 and all-samples Accuracy / Macro-F1 / Weighted-F1 where invalid predictions are counted as wrong. Both valid-only and all-samples confusion matrices are saved.
-Metrics JSON also includes `usage_summary`, `cost_estimate`, and `scaling_estimate`; prediction CSV files include per-sample LLM call count, tokens, and elapsed runtime.
+Metrics JSON also includes `usage_summary`, `cost_estimate`, and `scaling_estimate`; prediction CSV files include per-sample LLM call count, character counts, token counts when available, elapsed runtime, and per-sample estimated cost fields.
 
 LM prompts use prompt-scoped knowledge constraints:
 

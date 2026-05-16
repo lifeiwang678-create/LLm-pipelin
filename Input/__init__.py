@@ -59,6 +59,7 @@ def build_input_provider(config: dict):
             dataset=dataset,
             knowledge_file=config.get("knowledge_file"),
             knowledge_text=config.get("knowledge_text", ""),
+            knowledge_mode=config.get("knowledge_mode"),
         )
 
     raise ValueError(f"Unknown input type: {kind}")

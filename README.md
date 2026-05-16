@@ -8,7 +8,9 @@ This repository contains a modular experiment framework for stress/activity clas
 - `Output/`: concrete output parsers
 - `Evaluation/`: metrics and result saving
 
-`main.py` is intentionally thin. It only parses command-line arguments and asks `core/runner.py` to select and combine the requested modules.
+`main.py` is intentionally thin. It only parses command-line arguments and asks `core/runner.py` to select and combine the requested modules. `core/runner.py` is the single experiment execution path used by both `main.py` and `run_experiment.py`.
+
+The old `experiment_pipeline/` path is no longer part of the official framework. Do not add new experiments there or import from it; migrate old code to `Dataset/`, `Input/`, `LM/`, `Output/`, `Evaluation/`, and `core/runner.py`.
 
 ## Project Structure
 
@@ -89,8 +91,8 @@ Core dependencies include `numpy`, `pandas`, `scikit-learn`, `requests`, `PyYAML
 | `Dataset/registry.py` | Dataset defaults such as data directory, default subjects, and loader kwargs |
 | `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
 | `core/schema.py` | `SensorSample`, `LLMSample`, and dataset-specific label names |
-| `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
-| `Input/embedding_alignment.py` | Convert `SensorSample.signals` into SensorLLM-inspired encoded time-series text |
+| `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text, using a WESAD template or generic numeric channels for other datasets |
+| `Input/embedding_alignment.py` | Convert `SensorSample.signals` into SensorLLM-inspired textual encoded time-series; this is not true embedding-level alignment |
 | `Input/feature_description/factory.py` | Dataset-aware Feature Description selector |
 | `Input/feature_description/feature_functions.py` | Shared feature extraction and formatting helpers |
 | `Input/feature_description/basic_feature_description.py` | Basic Feature Description base class |
@@ -169,6 +171,12 @@ Encoded time-series direct-prediction example:
 python main.py -dataset WESAD -Input encoded_time_series -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
+Extra-knowledge input can use built-in dataset knowledge only, append external knowledge, or replace built-in knowledge with external knowledge:
+
+```powershell
+python main.py -dataset WESAD -Input extra_knowledge -LM direct -output label_only --subjects S2 --balanced-per-label 1 --knowledge-mode append --knowledge-file local_knowledge.txt
+```
+
 By default, `main.py` saves results under `Results/` using this naming style:
 
 ```text
@@ -183,17 +191,23 @@ The metrics JSON includes:
 - All-samples Accuracy / Macro-F1 / Weighted-F1 with invalid predictions counted as wrong
 - Valid-only and all-samples confusion matrices
 - Invalid prediction count and invalid rate
-- `usage_summary` with LLM call count, token counts, and elapsed runtime
+- `usage_summary` with LLM call count, character counts, token counts when available, and elapsed runtime
 - `cost_estimate` using optional per-1M-token input/output prices from config
 - `scaling_estimate` when `estimated_total_samples_for_full_experiment` is provided
 
 The prediction CSV also includes per-sample usage columns:
 
 - `llm_call_count`
+- `prompt_chars`
+- `completion_chars`
+- `total_chars`
 - `prompt_tokens`
 - `completion_tokens`
 - `total_tokens`
 - `elapsed_time_sec`
+- `estimated_input_cost`
+- `estimated_output_cost`
+- `estimated_total_cost`
 
 ## Batch / Config Runner
 
@@ -241,7 +255,18 @@ grid:
   output: [label_only, label_explanation]
 ```
 
+Extra-knowledge config options live under `input`:
+
+```yaml
+input:
+  type: extra_knowledge
+  knowledge_mode: append
+  knowledge_file: local_knowledge.txt
+  knowledge_text: ""
+```
+
 Encoded time-series can also be selected through config files with input type `embedding_alignment` or `encoded_time_series`.
+This input is a prompt-compatible textual adaptation inspired by SensorLLM. It does not train projectors, modify LLM embeddings, or replace time-series token embeddings.
 The default LM usage remains prompt-based direct/few-shot/multi-agent prediction.
 
 The official 4 x 3 x 2 experiment path supports the registered `LM/` methods: `direct`, `few_shot`, and `multi_agent`.
@@ -270,4 +295,5 @@ The following files are intentionally not uploaded to GitHub:
 - Parser failures are saved as invalid predictions, not converted to a default label.
 - Few-shot runs must explicitly separate train and test subjects.
 - Few-shot runs require at least `n_per_class` training examples for every label in `labels`; otherwise the run stops with a clear error.
+- `experiment_pipeline/` is a removed legacy path. The maintained entry is `main.py` / `run_experiment.py` -> `core/runner.py`.
 - `main.py` should stay as a module-composition entry point. Put real method logic in `Input/`, `LM/`, `Output/`, or `core/`.

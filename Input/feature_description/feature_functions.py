@@ -5,7 +5,7 @@ import numpy as np
 from core.signal_utils import describe_1d
 
 
-FeatureStats = dict[str, float | str]
+FeatureStats = dict[str, float | str | None]
 FeatureDict = dict[str, FeatureStats]
 
 
@@ -93,7 +93,9 @@ def _format_feature_line(name: str, stats: FeatureStats) -> str:
     )
 
 
-def _fmt(value: float | str) -> str:
+def _fmt(value: float | str | None) -> str:
+    if value is None:
+        return "unavailable due to insufficient signal"
     try:
         return f"{float(value):.3f}"
     except (TypeError, ValueError):

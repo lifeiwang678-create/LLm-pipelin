@@ -15,21 +15,21 @@ class WESADFeatureDescriptionInput(BaseFeatureDescriptionInput):
     dataset_name = "WESAD"
     title = "Input feature description for WESAD paper-style features:"
 
-    def extract_features(self, sample: SensorSample) -> dict[str, float]:
+    def extract_features(self, sample: SensorSample) -> dict[str, float | None]:
         return extract_wesad_paper_features(sample.signals)
 
-    def format_features(self, features: dict[str, float]) -> str:
+    def format_features(self, features: dict[str, float | None]) -> str:
         return format_wesad_paper_features(features)
 
 
-def extract_wesad_paper_features(signals: dict) -> dict[str, float]:
+def extract_wesad_paper_features(signals: dict) -> dict[str, float | None]:
     fs_chest = 700
     fs_wrist_bvp = 64
     fs_wrist_acc = 32
     fs_wrist_eda = 4
     fs_wrist_temp = 4
 
-    features: dict[str, float] = {}
+    features: dict[str, float | None] = {}
 
     if _has_signal(signals, "chest_acc"):
         features.update(_add_prefix(extract_acc_features(_center_crop(signals["chest_acc"], fs_chest, 5.0), fs_chest), "chest"))
@@ -57,7 +57,7 @@ def extract_wesad_paper_features(signals: dict) -> dict[str, float]:
     return {name: _finite(value) for name, value in features.items()}
 
 
-def format_wesad_paper_features(features: dict[str, float]) -> str:
+def format_wesad_paper_features(features: dict[str, float | None]) -> str:
     sections = {
         "Chest ACC": "chest_acc_",
         "Chest ECG/HRV": "chest_hr",
@@ -93,13 +93,13 @@ def format_wesad_paper_features(features: dict[str, float]) -> str:
     return "\n".join(lines)
 
 
-def extract_acc_features(acc_segment, fs: int) -> dict[str, float]:
-    feats = {
-        "acc_x_mean": 0.0, "acc_x_std": 0.0, "acc_x_abs_int": 0.0, "acc_x_peak_freq": 0.0,
-        "acc_y_mean": 0.0, "acc_y_std": 0.0, "acc_y_abs_int": 0.0, "acc_y_peak_freq": 0.0,
-        "acc_z_mean": 0.0, "acc_z_std": 0.0, "acc_z_abs_int": 0.0, "acc_z_peak_freq": 0.0,
-        "acc_3d_mean": 0.0, "acc_3d_std": 0.0, "acc_3d_abs_int": 0.0,
-    }
+def extract_acc_features(acc_segment, fs: int) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "acc_x_mean", "acc_x_std", "acc_x_abs_int", "acc_x_peak_freq",
+        "acc_y_mean", "acc_y_std", "acc_y_abs_int", "acc_y_peak_freq",
+        "acc_z_mean", "acc_z_std", "acc_z_abs_int", "acc_z_peak_freq",
+        "acc_3d_mean", "acc_3d_std", "acc_3d_abs_int",
+    ])
     acc_segment = _arr(acc_segment)
     if acc_segment.ndim != 2 or acc_segment.shape[0] < 10 or acc_segment.shape[1] < 3:
         return feats
@@ -120,7 +120,7 @@ def extract_acc_features(acc_segment, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_ecg_features(ecg_segment, fs: int) -> dict[str, float]:
+def extract_ecg_features(ecg_segment, fs: int) -> dict[str, float | None]:
     feats = _empty_cardiac_features()
     ecg_segment = _arr(ecg_segment).flatten()
     if len(ecg_segment) < fs * 10:
@@ -134,7 +134,7 @@ def extract_ecg_features(ecg_segment, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_bvp_features(bvp_segment, fs: int) -> dict[str, float]:
+def extract_bvp_features(bvp_segment, fs: int) -> dict[str, float | None]:
     feats = _empty_cardiac_features()
     bvp_segment = _arr(bvp_segment).flatten()
     if len(bvp_segment) < fs * 10:
@@ -148,13 +148,12 @@ def extract_bvp_features(bvp_segment, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_eda_features(eda_seg, fs: int) -> dict[str, float]:
-    feats = {
-        "eda_mean": 0.0, "eda_std": 0.0, "eda_min": 0.0, "eda_max": 0.0,
-        "eda_slope": 0.0, "eda_range": 0.0,
-        "scl_mean": 0.0, "scl_std": 0.0, "scr_std": 0.0, "scl_time_corr": 0.0,
-        "scr_num": 0.0, "scr_amp_sum": 0.0, "scr_dur_sum": 0.0, "scr_area": 0.0,
-    }
+def extract_eda_features(eda_seg, fs: int) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "eda_mean", "eda_std", "eda_min", "eda_max", "eda_slope", "eda_range",
+        "scl_mean", "scl_std", "scr_std", "scl_time_corr",
+        "scr_num", "scr_amp_sum", "scr_dur_sum", "scr_area",
+    ])
     eda_seg = _arr(eda_seg).flatten()
     if len(eda_seg) < max(10, int(fs * 5)):
         return feats
@@ -206,17 +205,17 @@ def extract_eda_features(eda_seg, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_emg_features(emg_5s, emg_60s, fs: int) -> dict[str, float]:
-    feats = {
-        "emg_mean": 0.0, "emg_std": 0.0, "emg_range": 0.0, "emg_abs_int": 0.0,
-        "emg_median": 0.0, "emg_p10": 0.0, "emg_p90": 0.0,
-        "emg_freq_mean": 0.0, "emg_freq_median": 0.0, "emg_peak_freq": 0.0,
-        "emg_psd_band_1": 0.0, "emg_psd_band_2": 0.0, "emg_psd_band_3": 0.0,
-        "emg_psd_band_4": 0.0, "emg_psd_band_5": 0.0, "emg_psd_band_6": 0.0,
-        "emg_psd_band_7": 0.0,
-        "emg_peaks_num": 0.0, "emg_peak_amp_mean": 0.0, "emg_peak_amp_std": 0.0,
-        "emg_peak_amp_sum": 0.0, "emg_peak_amp_sum_norm": 0.0,
-    }
+def extract_emg_features(emg_5s, emg_60s, fs: int) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "emg_mean", "emg_std", "emg_range", "emg_abs_int",
+        "emg_median", "emg_p10", "emg_p90",
+        "emg_freq_mean", "emg_freq_median", "emg_peak_freq",
+        "emg_psd_band_1", "emg_psd_band_2", "emg_psd_band_3",
+        "emg_psd_band_4", "emg_psd_band_5", "emg_psd_band_6",
+        "emg_psd_band_7",
+        "emg_peaks_num", "emg_peak_amp_mean", "emg_peak_amp_std",
+        "emg_peak_amp_sum", "emg_peak_amp_sum_norm",
+    ])
     emg_5s = _arr(emg_5s).flatten()
     emg_60s = _arr(emg_60s).flatten()
     if len(emg_5s) < max(10, fs) or len(emg_60s) < max(10, fs):
@@ -260,13 +259,13 @@ def extract_emg_features(emg_5s, emg_60s, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_resp_features(resp_seg, fs: int) -> dict[str, float]:
-    feats = {
-        "resp_inhale_mean": 0.0, "resp_inhale_std": 0.0,
-        "resp_exhale_mean": 0.0, "resp_exhale_std": 0.0,
-        "resp_ie_ratio": 0.0, "resp_range": 0.0,
-        "resp_insp_vol": 0.0, "resp_rate": 0.0, "resp_duration": 0.0,
-    }
+def extract_resp_features(resp_seg, fs: int) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "resp_inhale_mean", "resp_inhale_std",
+        "resp_exhale_mean", "resp_exhale_std",
+        "resp_ie_ratio", "resp_range",
+        "resp_insp_vol", "resp_rate", "resp_duration",
+    ])
     resp_seg = _arr(resp_seg).flatten()
     if len(resp_seg) < max(10, int(fs * 10)):
         return feats
@@ -326,13 +325,12 @@ def extract_resp_features(resp_seg, fs: int) -> dict[str, float]:
     return feats
 
 
-def extract_temp_features(temp_seg, fs: int) -> dict[str, float]:
-    feats = {
-        "temp_mean": 0.0, "temp_std": 0.0, "temp_min": 0.0,
-        "temp_max": 0.0, "temp_range": 0.0, "temp_slope": 0.0,
-    }
+def extract_temp_features(temp_seg, fs: int) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "temp_mean", "temp_std", "temp_min", "temp_max", "temp_range", "temp_slope",
+    ])
     temp_seg = _arr(temp_seg).flatten()
-    if len(temp_seg) < 2:
+    if len(temp_seg) == 0:
         return feats
     feats["temp_mean"] = float(np.mean(temp_seg))
     feats["temp_std"] = float(np.std(temp_seg))
@@ -343,16 +341,16 @@ def extract_temp_features(temp_seg, fs: int) -> dict[str, float]:
     return feats
 
 
-def _empty_cardiac_features() -> dict[str, float]:
-    return {key: 0.0 for key in [
+def _empty_cardiac_features() -> dict[str, float | None]:
+    return _unavailable_features([
         "hr_mean", "hr_std", "hrv_mean", "hrv_std", "hrv_nn50", "hrv_pnn50",
         "hrv_tinn", "hrv_rmssd", "hrv_abs_ulf", "hrv_abs_lf", "hrv_abs_hf",
         "hrv_abs_uhf", "hrv_lf_hf_ratio", "hrv_total_power", "hrv_rel_ulf",
         "hrv_rel_lf", "hrv_rel_hf", "hrv_rel_uhf", "hrv_lf_norm", "hrv_hf_norm",
-    ]}
+    ])
 
 
-def _compute_cardiac_features_from_peaks(peaks, fs: int) -> dict[str, float]:
+def _compute_cardiac_features_from_peaks(peaks, fs: int) -> dict[str, float | None]:
     feats = _empty_cardiac_features()
     peaks = np.asarray(peaks, dtype=int)
     if len(peaks) < 4:
@@ -376,13 +374,13 @@ def _compute_cardiac_features_from_peaks(peaks, fs: int) -> dict[str, float]:
     return feats
 
 
-def _compute_hrv_spectral_features(intervals_sec) -> dict[str, float]:
-    feats = {
-        "hrv_abs_ulf": 0.0, "hrv_abs_lf": 0.0, "hrv_abs_hf": 0.0, "hrv_abs_uhf": 0.0,
-        "hrv_lf_hf_ratio": 0.0, "hrv_total_power": 0.0,
-        "hrv_rel_ulf": 0.0, "hrv_rel_lf": 0.0, "hrv_rel_hf": 0.0, "hrv_rel_uhf": 0.0,
-        "hrv_lf_norm": 0.0, "hrv_hf_norm": 0.0,
-    }
+def _compute_hrv_spectral_features(intervals_sec) -> dict[str, float | None]:
+    feats = _unavailable_features([
+        "hrv_abs_ulf", "hrv_abs_lf", "hrv_abs_hf", "hrv_abs_uhf",
+        "hrv_lf_hf_ratio", "hrv_total_power",
+        "hrv_rel_ulf", "hrv_rel_lf", "hrv_rel_hf", "hrv_rel_uhf",
+        "hrv_lf_norm", "hrv_hf_norm",
+    ])
     intervals_sec = _arr(intervals_sec).flatten()
     if len(intervals_sec) < 4:
         return feats
@@ -417,18 +415,18 @@ def _compute_hrv_spectral_features(intervals_sec) -> dict[str, float]:
     return feats
 
 
-def _compute_tinn(intervals_sec, bins: int = 64) -> float:
+def _compute_tinn(intervals_sec, bins: int = 64) -> float | None:
     intervals_sec = _arr(intervals_sec).flatten()
     if len(intervals_sec) < 5:
-        return 0.0
+        return None
     try:
         hist, edges = np.histogram(intervals_sec * 1000.0, bins=bins)
         nonzero = np.where(hist > 0)[0]
         if len(nonzero) < 2:
-            return 0.0
+            return None
         return float(edges[nonzero[-1] + 1] - edges[nonzero[0]])
     except Exception:
-        return 0.0
+        return None
 
 
 def _estimate_scr_regions_from_peaks(scr_sig, peaks) -> list[tuple[int, int]]:
@@ -458,11 +456,11 @@ def _center_crop(sig, fs: int, seconds: float):
     return arr[start : start + target_len]
 
 
-def _compact_feature_lines(features: dict[str, float], names: list[str], per_line: int = 4) -> list[str]:
+def _compact_feature_lines(features: dict[str, float | None], names: list[str], per_line: int = 4) -> list[str]:
     lines = []
     for start in range(0, len(names), per_line):
         chunk = names[start : start + per_line]
-        lines.append("- " + ", ".join(f"{name}={features[name]:.4g}" for name in chunk))
+        lines.append("- " + ", ".join(f"{name}={_format_feature_value(features[name])}" for name in chunk))
     return lines
 
 
@@ -472,7 +470,7 @@ def _has_prefix(name: str, prefixes) -> bool:
     return any(name.startswith(prefix) for prefix in prefixes)
 
 
-def _add_prefix(feature_dict: dict[str, float], prefix: str) -> dict[str, float]:
+def _add_prefix(feature_dict: dict[str, float | None], prefix: str) -> dict[str, float | None]:
     return {f"{prefix}_{key}": value for key, value in feature_dict.items()}
 
 
@@ -488,45 +486,57 @@ def _arr(value) -> np.ndarray:
     return np.asarray(value, dtype=float)
 
 
-def _absolute_integral(x, fs: int) -> float:
+def _absolute_integral(x, fs: int) -> float | None:
     x = _arr(x).flatten()
     if len(x) == 0:
-        return 0.0
+        return None
     return float(np.trapezoid(np.abs(x), dx=1.0 / fs))
 
 
-def _slope_feature(x, fs: int) -> float:
+def _slope_feature(x, fs: int) -> float | None:
     x = _arr(x).flatten()
     if len(x) < 2:
-        return 0.0
+        return None
     t = np.arange(len(x)) / fs
     return float(np.polyfit(t, x, 1)[0])
 
 
-def _dynamic_range(x) -> float:
+def _dynamic_range(x) -> float | None:
     x = _arr(x).flatten()
     if len(x) == 0:
-        return 0.0
+        return None
     return float(np.nanmax(x) - np.nanmin(x))
 
 
-def _safe_corr_with_time(x) -> float:
+def _safe_corr_with_time(x) -> float | None:
     x = _arr(x).flatten()
     if len(x) < 2 or np.nanstd(x) == 0:
-        return 0.0
+        return None
     return float(np.corrcoef(x, np.arange(len(x), dtype=float))[0, 1])
 
 
-def _safe_div(a, b) -> float:
-    return float(a) / float(b) if b not in [0, 0.0] else 0.0
+def _safe_div(a, b) -> float | None:
+    return float(a) / float(b) if b not in [0, 0.0] else None
 
 
-def _finite(value) -> float:
+def _finite(value) -> float | None:
+    if value is None:
+        return None
     try:
         value = float(value)
     except (TypeError, ValueError):
-        return 0.0
-    return value if np.isfinite(value) else 0.0
+        return None
+    return value if np.isfinite(value) else None
+
+
+def _unavailable_features(names: list[str]) -> dict[str, float | None]:
+    return {name: None for name in names}
+
+
+def _format_feature_value(value: float | None) -> str:
+    if value is None:
+        return "unavailable due to insufficient signal"
+    return f"{float(value):.4g}"
 
 
 __all__ = [

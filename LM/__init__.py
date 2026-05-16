@@ -48,7 +48,7 @@ def build_lm_usage(
             input_name=input_name,
             output_instructions=output_instructions,
             agents=config.get("agents"),
-            final_decider=config.get("final_decider", "decision_maker"),
+            final_decider=config.get("final_decider", "final_decision_agent"),
             dataset=dataset,
         )
 

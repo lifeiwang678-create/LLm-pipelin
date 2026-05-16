@@ -57,16 +57,16 @@ def pack_acc_xyz(acc_seg: np.ndarray, target_len: int = 40) -> dict[str, list[fl
     }
 
 
-def describe_1d(sig: np.ndarray) -> dict[str, float | str]:
+def describe_1d(sig: np.ndarray) -> dict[str, float | str | None]:
     x = np.asarray(sig, dtype=np.float32).flatten()
     if len(x) == 0:
         return {
-            "mean": 0.0,
-            "std": 0.0,
-            "min": 0.0,
-            "max": 0.0,
-            "p25": 0.0,
-            "p75": 0.0,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "p25": None,
+            "p75": None,
             "trend": "empty",
         }
 
@@ -86,4 +86,3 @@ def describe_1d(sig: np.ndarray) -> dict[str, float | str]:
         "p75": float(np.percentile(x, 75)),
         "trend": trend,
     }
-

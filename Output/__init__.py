@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-try:
-    from .label_only import LabelOnlyOutput
-except ModuleNotFoundError:
-    from .label import LabelOnlyOutput
-
+from .label_only import LabelOnlyOutput
 from .label_explanation import LabelExplanationOutput
 
 

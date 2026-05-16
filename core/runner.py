@@ -57,6 +57,18 @@ def build_experiment_config(args: Namespace) -> dict:
     if args.dataset == "WESAD" and args.Input == "feature_description":
         dataset_config["loader_kwargs"]["window_sec"] = 60.0
 
+    input_config = {
+        "type": args.Input,
+        "dataset": args.dataset,
+    }
+    if args.Input == "extra_knowledge":
+        if args.knowledge_file:
+            input_config["knowledge_file"] = args.knowledge_file
+        if args.knowledge_text:
+            input_config["knowledge_text"] = args.knowledge_text
+        if args.knowledge_mode:
+            input_config["knowledge_mode"] = args.knowledge_mode
+
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
@@ -64,10 +76,7 @@ def build_experiment_config(args: Namespace) -> dict:
         "output_dir": "Results",
         "dataset": dataset_config,
         "data": data_cfg,
-        "input": {
-            "type": args.Input,
-            "dataset": args.dataset,
-        },
+        "input": input_config,
         "lm_usage": {
             "type": args.LM,
             "n_per_class": args.few_shot_n_per_class or default_few_shot_n,
@@ -173,6 +182,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
             prompt = lm_usage.build_prompt(sample)
             raw_response = client.complete(prompt)
         llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
+        llm_usage.update(_estimate_sample_cost(llm_usage, config))
         parsed = output_handler.parse(raw_response)
         valid = bool(parsed.get("valid", parsed.get("label") is not None))
         records.append(
@@ -243,6 +253,9 @@ def _aggregate_llm_usage(usage_records: list[dict]) -> dict:
     token_missing_count = call_count - token_available_count
     return {
         "llm_call_count": call_count,
+        "prompt_chars": _sum_numeric_usage(usage_records, "prompt_chars"),
+        "completion_chars": _sum_numeric_usage(usage_records, "completion_chars"),
+        "total_chars": _sum_numeric_usage(usage_records, "total_chars"),
         "prompt_tokens": _sum_optional_usage(usage_records, "prompt_tokens"),
         "completion_tokens": _sum_optional_usage(usage_records, "completion_tokens"),
         "total_tokens": _sum_optional_usage(usage_records, "total_tokens"),
@@ -257,6 +270,32 @@ def _sum_optional_usage(usage_records: list[dict], key: str) -> int | None:
     if not values:
         return None
     return int(sum(int(value) for value in values))
+
+
+def _sum_numeric_usage(usage_records: list[dict], key: str) -> int:
+    return int(sum(int(record.get(key) or 0) for record in usage_records))
+
+
+def _estimate_sample_cost(llm_usage: dict, config: dict) -> dict:
+    cost_config = config.get("cost_estimate", config.get("cost", {}))
+    if not isinstance(cost_config, dict):
+        cost_config = {}
+    input_cost_per_1m = float(cost_config.get("input_cost_per_1m_tokens", 0.0) or 0.0)
+    output_cost_per_1m = float(cost_config.get("output_cost_per_1m_tokens", 0.0) or 0.0)
+    input_cost = _token_cost(llm_usage.get("prompt_tokens"), input_cost_per_1m)
+    output_cost = _token_cost(llm_usage.get("completion_tokens"), output_cost_per_1m)
+    total_cost = input_cost + output_cost if input_cost is not None and output_cost is not None else None
+    return {
+        "estimated_input_cost": input_cost,
+        "estimated_output_cost": output_cost,
+        "estimated_total_cost": total_cost,
+    }
+
+
+def _token_cost(tokens: int | float | None, cost_per_1m_tokens: float) -> float | None:
+    if tokens is None:
+        return None
+    return (float(tokens) / 1_000_000.0) * cost_per_1m_tokens
 
 
 def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
