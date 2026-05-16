@@ -1,4 +1,4 @@
-# Modular WESAD LLM Experiment Pipeline
+# Modular LLM Experiment Pipeline
 
 This repository contains a modular experiment framework for stress/activity classification. The experiment is organized into five visible parts:
 
@@ -171,6 +171,17 @@ The metrics JSON includes:
 - All-samples Accuracy / Macro-F1 / Weighted-F1 with invalid predictions counted as wrong
 - Valid-only and all-samples confusion matrices
 - Invalid prediction count and invalid rate
+- `usage_summary` with LLM call count, token counts, and elapsed runtime
+- `cost_estimate` using optional per-1M-token input/output prices from config
+- `scaling_estimate` when `estimated_total_samples_for_full_experiment` is provided
+
+The prediction CSV also includes per-sample usage columns:
+
+- `llm_call_count`
+- `prompt_tokens`
+- `completion_tokens`
+- `total_tokens`
+- `elapsed_time_sec`
 
 ## Batch / Config Runner
 

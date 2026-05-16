@@ -63,6 +63,7 @@ It describes channel-aware temporal patterns in text and stays inside the offici
 Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
 
 Evaluation metrics include valid-only Accuracy / Macro-F1 / Weighted-F1 and all-samples Accuracy / Macro-F1 / Weighted-F1 where invalid predictions are counted as wrong. Both valid-only and all-samples confusion matrices are saved.
+Metrics JSON also includes `usage_summary`, `cost_estimate`, and `scaling_estimate`; prediction CSV files include per-sample LLM call count, tokens, and elapsed runtime.
 
 LM prompts use prompt-scoped knowledge constraints:
 

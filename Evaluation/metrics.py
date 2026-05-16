@@ -101,6 +101,9 @@ def summarize_and_save(
         conf_mat = []
     label_names = label_names_for_dataset(dataset)
     all_sample_metrics = _all_sample_metrics_invalid_as_wrong(df, labels)
+    usage_summary = _usage_summary(df)
+    cost_estimate = _cost_estimate(config, usage_summary)
+    scaling_estimate = _scaling_estimate(config, usage_summary, cost_estimate, len(records))
 
     metrics = {
         "accuracy": accuracy,
@@ -123,6 +126,9 @@ def summarize_and_save(
         "valid_count": int(len(valid_df)),
         "invalid_count": invalid_count,
         "invalid_rate": invalid_count / len(df) if len(df) else 0.0,
+        "usage_summary": usage_summary,
+        "cost_estimate": cost_estimate,
+        "scaling_estimate": scaling_estimate,
         "predictions_path": str(predictions_path),
         "config_path": str(config_path),
     }
@@ -162,6 +168,134 @@ def _wrong_label_for(true_label: int, labels: list[int]) -> int:
         if label != true_label:
             return label
     return true_label
+
+
+def _usage_summary(df: pd.DataFrame) -> dict:
+    n_samples = len(df)
+    total_llm_calls = _sum_numeric_column(df, "llm_call_count", default=0)
+    total_prompt_tokens = _sum_nullable_numeric_column(df, "prompt_tokens")
+    total_completion_tokens = _sum_nullable_numeric_column(df, "completion_tokens")
+    total_tokens = _sum_nullable_numeric_column(df, "total_tokens")
+    total_elapsed_time_sec = _sum_numeric_column(df, "elapsed_time_sec", default=0.0)
+    token_usage_available_count = _sum_numeric_column(df, "llm_token_usage_available_count", default=0)
+    token_usage_missing_count = _sum_numeric_column(df, "llm_token_usage_missing_count", default=0)
+    samples_with_token_usage = _count_non_null(df, "total_tokens")
+
+    return {
+        "total_llm_calls": int(total_llm_calls),
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
+        "total_elapsed_time_sec": float(total_elapsed_time_sec),
+        "average_prompt_tokens_per_sample": _safe_average(total_prompt_tokens, samples_with_token_usage),
+        "average_completion_tokens_per_sample": _safe_average(total_completion_tokens, samples_with_token_usage),
+        "average_total_tokens_per_sample": _safe_average(total_tokens, samples_with_token_usage),
+        "average_elapsed_time_sec_per_sample": _safe_average(total_elapsed_time_sec, n_samples),
+        "token_usage_available_count": int(token_usage_available_count),
+        "token_usage_missing_count": int(token_usage_missing_count),
+        "sample_token_usage_available_count": int(samples_with_token_usage),
+        "sample_token_usage_missing_count": int(n_samples - samples_with_token_usage),
+    }
+
+
+def _cost_estimate(config: dict, usage_summary: dict) -> dict:
+    cost_config = _cost_config(config)
+    input_cost_per_1m = float(cost_config.get("input_cost_per_1m_tokens", 0.0) or 0.0)
+    output_cost_per_1m = float(cost_config.get("output_cost_per_1m_tokens", 0.0) or 0.0)
+    input_tokens = usage_summary.get("total_prompt_tokens")
+    output_tokens = usage_summary.get("total_completion_tokens")
+    estimated_input_cost = _token_cost(input_tokens, input_cost_per_1m)
+    estimated_output_cost = _token_cost(output_tokens, output_cost_per_1m)
+    estimated_total_cost = None
+    if estimated_input_cost is not None and estimated_output_cost is not None:
+        estimated_total_cost = estimated_input_cost + estimated_output_cost
+    return {
+        "model": (config.get("lm_client") or {}).get("model"),
+        "input_cost_per_1m_tokens": input_cost_per_1m,
+        "output_cost_per_1m_tokens": output_cost_per_1m,
+        "estimated_input_cost": estimated_input_cost,
+        "estimated_output_cost": estimated_output_cost,
+        "estimated_total_cost": estimated_total_cost,
+    }
+
+
+def _scaling_estimate(config: dict, usage_summary: dict, cost_estimate: dict, current_samples: int) -> dict:
+    scaling_config = _scaling_config(config)
+    current_runs = scaling_config.get("current_runs", config.get("current_runs", 1))
+    estimated_total_samples = scaling_config.get(
+        "estimated_total_samples_for_full_experiment",
+        config.get("estimated_total_samples_for_full_experiment"),
+    )
+    estimated_total_runs = scaling_config.get(
+        "estimated_total_runs_for_full_experiment",
+        config.get("estimated_total_runs_for_full_experiment"),
+    )
+    average_total_tokens = usage_summary.get("average_total_tokens_per_sample")
+    estimated_total_tokens = None
+    if estimated_total_samples is not None and average_total_tokens is not None:
+        estimated_total_tokens = float(average_total_tokens) * int(estimated_total_samples)
+
+    estimated_total_cost = None
+    sample_count_for_cost = usage_summary.get("sample_token_usage_available_count")
+    current_cost = cost_estimate.get("estimated_total_cost")
+    if estimated_total_samples is not None and current_cost is not None and sample_count_for_cost:
+        estimated_total_cost = (float(current_cost) / int(sample_count_for_cost)) * int(estimated_total_samples)
+
+    return {
+        "current_samples": int(current_samples),
+        "current_runs": int(current_runs) if current_runs is not None else None,
+        "estimated_total_samples_for_full_experiment": int(estimated_total_samples)
+        if estimated_total_samples is not None
+        else None,
+        "estimated_total_runs_for_full_experiment": int(estimated_total_runs)
+        if estimated_total_runs is not None
+        else None,
+        "estimated_total_tokens_for_full_experiment": estimated_total_tokens,
+        "estimated_total_cost_for_full_experiment": estimated_total_cost,
+    }
+
+
+def _cost_config(config: dict) -> dict:
+    value = config.get("cost_estimate", config.get("cost", {}))
+    return value if isinstance(value, dict) else {}
+
+
+def _scaling_config(config: dict) -> dict:
+    value = config.get("scaling_estimate", config.get("scaling", {}))
+    return value if isinstance(value, dict) else {}
+
+
+def _token_cost(tokens: int | float | None, cost_per_1m_tokens: float) -> float | None:
+    if tokens is None:
+        return None
+    return (float(tokens) / 1_000_000.0) * cost_per_1m_tokens
+
+
+def _sum_numeric_column(df: pd.DataFrame, column: str, default: int | float) -> int | float:
+    if column not in df.columns or len(df) == 0:
+        return default
+    return pd.to_numeric(df[column], errors="coerce").fillna(0).sum()
+
+
+def _sum_nullable_numeric_column(df: pd.DataFrame, column: str) -> int | None:
+    if column not in df.columns or len(df) == 0:
+        return None
+    values = pd.to_numeric(df[column], errors="coerce").dropna()
+    if len(values) == 0:
+        return None
+    return int(values.sum())
+
+
+def _count_non_null(df: pd.DataFrame, column: str) -> int:
+    if column not in df.columns or len(df) == 0:
+        return 0
+    return int(pd.to_numeric(df[column], errors="coerce").notna().sum())
+
+
+def _safe_average(total: int | float | None, count: int) -> float | None:
+    if total is None or count <= 0:
+        return None
+    return float(total) / count
 
 
 def _dataset_name_from_config(config: dict) -> str | None:

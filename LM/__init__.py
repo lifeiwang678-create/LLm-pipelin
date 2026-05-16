@@ -1,17 +1,26 @@
+from __future__ import annotations
+
 from .direct import DirectUsage
 from .few_shot import FewShotUsage
 from .multi_agent import MultiAgentUsage
+
+
+LM_REGISTRY = {
+    "direct": DirectUsage,
+    "few_shot": FewShotUsage,
+    "multi_agent": MultiAgentUsage,
+}
 
 
 def build_lm_usage(
     config: dict,
     labels: list[int],
     input_name: str,
-    train_samples,
+    train_samples: list,
     output_instructions: str,
     dataset: str | None = None,
 ):
-    kind = str(config.get("type", "direct")).lower()
+    kind = str(config.get("type", "direct")).strip().lower()
 
     if kind == "direct":
         return DirectUsage(
@@ -21,7 +30,7 @@ def build_lm_usage(
             dataset=dataset,
         )
 
-    if kind in {"fewshot", "few_shot", "few-shot"}:
+    if kind == "few_shot":
         return FewShotUsage(
             labels=labels,
             input_name=input_name,
@@ -33,13 +42,13 @@ def build_lm_usage(
             dataset=dataset,
         )
 
-    if kind in {"multiagent", "multi_agent", "multi-agent"}:
+    if kind == "multi_agent":
         return MultiAgentUsage(
             labels=labels,
             input_name=input_name,
             output_instructions=output_instructions,
             agents=config.get("agents"),
-            final_decider=config.get("final_decider", "final_decision_agent"),
+            final_decider=config.get("final_decider", "decision_maker"),
             dataset=dataset,
         )
 
@@ -47,6 +56,7 @@ def build_lm_usage(
 
 
 __all__ = [
+    "LM_REGISTRY",
     "DirectUsage",
     "FewShotUsage",
     "MultiAgentUsage",

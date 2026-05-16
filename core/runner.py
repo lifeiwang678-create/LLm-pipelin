@@ -19,14 +19,14 @@ DEFAULT_LM_CLIENT_CONFIG = {
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
     "max_tokens": 128,
-    "timeout": 30,
+    "timeout": 600,
 }
 
 
 def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
     long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series"}
-    lm_timeout = 60 if long_input else 30
+    lm_timeout = 600 if long_input else 300
     max_tokens = 384 if long_input else 128
     default_few_shot_n = 1 if long_input else 2
     default_example_max_chars = 1500 if long_input else None
@@ -166,11 +166,13 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
 
     records = []
     for idx, sample in enumerate(eval_samples, 1):
+        usage_start = len(getattr(client, "usage_records", []))
         if hasattr(lm_usage, "run_agent_pipeline"):
             raw_response = lm_usage.run_agent_pipeline(sample, client)
         else:
             prompt = lm_usage.build_prompt(sample)
             raw_response = client.complete(prompt)
+        llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
         parsed = output_handler.parse(raw_response)
         valid = bool(parsed.get("valid", parsed.get("label") is not None))
         records.append(
@@ -182,6 +184,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
                 "parse_error": parsed.get("parse_error", ""),
                 "explanation": parsed.get("explanation", ""),
                 "raw_response": raw_response,
+                **llm_usage,
                 **sample.meta,
             }
         )
@@ -224,8 +227,36 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         f"{metrics['confusion_matrix_all_samples_invalid_as_wrong']}"
     )
     print(f"Invalid predictions: {metrics['invalid_count']}/{metrics['n_samples']}")
+    usage_summary = metrics.get("usage_summary", {})
+    if usage_summary:
+        print(f"LLM calls: {usage_summary['total_llm_calls']}")
+        print(f"Total tokens: {usage_summary['total_tokens']}")
+        print(f"Total LLM elapsed sec: {usage_summary['total_elapsed_time_sec']:.3f}")
+        print(f"Token usage missing calls: {usage_summary['token_usage_missing_count']}")
     print(f"Results: {Path(metrics['predictions_path'])}")
     return metrics
+
+
+def _aggregate_llm_usage(usage_records: list[dict]) -> dict:
+    call_count = len(usage_records)
+    token_available_count = sum(1 for record in usage_records if record.get("total_tokens") is not None)
+    token_missing_count = call_count - token_available_count
+    return {
+        "llm_call_count": call_count,
+        "prompt_tokens": _sum_optional_usage(usage_records, "prompt_tokens"),
+        "completion_tokens": _sum_optional_usage(usage_records, "completion_tokens"),
+        "total_tokens": _sum_optional_usage(usage_records, "total_tokens"),
+        "elapsed_time_sec": sum(float(record.get("elapsed_time_sec") or 0.0) for record in usage_records),
+        "llm_token_usage_available_count": token_available_count,
+        "llm_token_usage_missing_count": token_missing_count,
+    }
+
+
+def _sum_optional_usage(usage_records: list[dict], key: str) -> int | None:
+    values = [record.get(key) for record in usage_records if record.get(key) is not None]
+    if not values:
+        return None
+    return int(sum(int(value) for value in values))
 
 
 def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:

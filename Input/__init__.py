@@ -1,7 +1,18 @@
+from __future__ import annotations
+
 from .embedding_alignment import EmbeddingAlignmentInput
 from .extra_knowledge import ExtraKnowledgeInput
 from .feature_description import FeatureDescriptionInput, get_feature_description_builder
 from .raw_data import RawDataInput
+
+
+INPUT_REGISTRY = {
+    "raw_data": RawDataInput,
+    "feature_description": FeatureDescriptionInput,
+    "embedding_alignment": EmbeddingAlignmentInput,
+    "encoded_time_series": EmbeddingAlignmentInput,
+    "extra_knowledge": ExtraKnowledgeInput,
+}
 
 
 def build_input_provider(config: dict):
@@ -48,13 +59,13 @@ def build_input_provider(config: dict):
             dataset=dataset,
             knowledge_file=config.get("knowledge_file"),
             knowledge_text=config.get("knowledge_text", ""),
-            knowledge_mode=config.get("knowledge_mode"),
         )
 
     raise ValueError(f"Unknown input type: {kind}")
 
 
 __all__ = [
+    "INPUT_REGISTRY",
     "RawDataInput",
     "FeatureDescriptionInput",
     "EmbeddingAlignmentInput",
