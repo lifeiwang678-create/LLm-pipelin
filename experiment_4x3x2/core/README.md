@@ -16,6 +16,8 @@ python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 ```
 
 By default, `main.py` does not sample or balance the evaluation set. Add `--balanced-per-label` only for debug runs.
+For WESAD, the configured default subjects are currently `S2` and `S3`; pass `--subjects` to evaluate a different subject set.
+`raw_data` is currently WESAD-specific and will fail clearly for HHAR/DREAMT until dataset-aware raw formatting is added.
 
 Install dependencies from the repository root before running experiments:
 

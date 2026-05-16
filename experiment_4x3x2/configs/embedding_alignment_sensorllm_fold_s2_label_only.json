@@ -1,4 +1,4 @@
-{
+﻿{
   "run_name": "wesad_embedding_alignment_sensorllm_fold_s2_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
@@ -36,3 +36,4 @@
     "log_every": 10
   }
 }
+

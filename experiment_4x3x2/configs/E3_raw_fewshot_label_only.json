@@ -1,5 +1,5 @@
-{
-  "run_name": "E4_feature_fewshot_label_only",
+﻿{
+  "run_name": "E3_raw_fewshot_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
   "data": {
@@ -7,9 +7,10 @@
     "test_subjects": ["S7", "S8"]
   },
   "input": {
-    "type": "feature_description",
-    "data_dir": ".",
-    "pattern": "*_features_paperstyle.csv"
+    "type": "raw_data",
+    "data_dir": "..",
+    "window_sec": 10.0,
+    "stride_sec": 15.0
   },
   "lm_usage": {
     "type": "few_shot",
@@ -25,11 +26,12 @@
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
     "max_tokens": 128,
-    "timeout": 30
+    "timeout": 60
   },
   "evaluation": {
     "balanced_per_label": 10,
-    "log_every": 10
+    "log_every": 5
   }
 }
+
 

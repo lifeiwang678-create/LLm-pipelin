@@ -111,7 +111,7 @@ def extract_acc_features(acc_segment, fs: int) -> dict[str, float | None]:
         feats[f"acc_{axis}_std"] = float(np.std(sig))
         feats[f"acc_{axis}_abs_int"] = _absolute_integral(sig, fs)
         f, pxx = welch(sig, fs=fs, nperseg=nperseg_val)
-        feats[f"acc_{axis}_peak_freq"] = float(f[np.argmax(pxx)]) if len(f) else 0.0
+        feats[f"acc_{axis}_peak_freq"] = float(f[np.argmax(pxx)]) if len(f) else None
 
     acc_3d = np.linalg.norm(acc_segment[:, :3], axis=1)
     feats["acc_3d_mean"] = float(np.mean(acc_3d))
@@ -243,7 +243,7 @@ def extract_emg_features(emg_5s, emg_60s, fs: int) -> dict[str, float | None]:
         for idx in range(7):
             lo, hi = band_edges[idx], band_edges[idx + 1]
             mask = (f >= lo) & (f < hi)
-            feats[f"emg_psd_band_{idx + 1}"] = float(np.trapezoid(pxx[mask], f[mask])) if np.any(mask) else 0.0
+            feats[f"emg_psd_band_{idx + 1}"] = float(np.trapezoid(pxx[mask], f[mask])) if np.any(mask) else None
 
         e60 = sosfiltfilt(butter(4, 50.0 / nyq, btype="low", output="sos"), emg_60s)
         peaks, props = find_peaks(e60, height=np.mean(e60) + np.std(e60))
@@ -367,9 +367,9 @@ def _compute_cardiac_features_from_peaks(peaks, fs: int) -> dict[str, float | No
     diff_rr_ms = np.abs(np.diff(rr)) * 1000.0
     nn50 = np.sum(diff_rr_ms > 50.0)
     feats["hrv_nn50"] = float(nn50)
-    feats["hrv_pnn50"] = float(nn50 / len(diff_rr_ms)) if len(diff_rr_ms) else 0.0
+    feats["hrv_pnn50"] = float(nn50 / len(diff_rr_ms)) if len(diff_rr_ms) else None
     feats["hrv_tinn"] = _compute_tinn(rr)
-    feats["hrv_rmssd"] = float(np.sqrt(np.mean(np.diff(rr) ** 2))) if len(rr) > 1 else 0.0
+    feats["hrv_rmssd"] = float(np.sqrt(np.mean(np.diff(rr) ** 2))) if len(rr) > 1 else None
     feats.update(_compute_hrv_spectral_features(rr))
     return feats
 
@@ -398,16 +398,18 @@ def _compute_hrv_spectral_features(intervals_sec) -> dict[str, float | None]:
         powers = {}
         for name, (lo, hi) in bands.items():
             mask = (f >= lo) & (f < hi)
-            powers[name] = float(np.trapezoid(pxx[mask], f[mask])) if np.any(mask) else 0.0
+            powers[name] = float(np.trapezoid(pxx[mask], f[mask])) if np.any(mask) else None
             feats[f"hrv_abs_{name}"] = powers[name]
-        total = sum(powers.values())
+        total = sum(value for value in powers.values() if value is not None)
         feats["hrv_total_power"] = total
         feats["hrv_lf_hf_ratio"] = _safe_div(powers["lf"], powers["hf"])
         if total > 0:
             for name in bands:
-                feats[f"hrv_rel_{name}"] = powers[name] / total
-        denom = powers["lf"] + powers["hf"]
-        if denom > 0:
+                feats[f"hrv_rel_{name}"] = powers[name] / total if powers[name] is not None else None
+        denom = None
+        if powers["lf"] is not None and powers["hf"] is not None:
+            denom = powers["lf"] + powers["hf"]
+        if denom is not None and denom > 0:
             feats["hrv_lf_norm"] = powers["lf"] / denom
             feats["hrv_hf_norm"] = powers["hf"] / denom
     except Exception:
@@ -516,7 +518,9 @@ def _safe_corr_with_time(x) -> float | None:
 
 
 def _safe_div(a, b) -> float | None:
-    return float(a) / float(b) if b not in [0, 0.0] else None
+    if a is None or b is None or b in [0, 0.0]:
+        return None
+    return float(a) / float(b)
 
 
 def _finite(value) -> float | None:

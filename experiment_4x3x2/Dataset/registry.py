@@ -8,7 +8,7 @@ from .wesad_loader import WESADLoader
 DATASET_REGISTRY = {
     "WESAD": {
         "loader": WESADLoader,
-        "data_dir": ".",
+        "data_dir": "..",
         "subjects": ["S2", "S3"],
         "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
         "test_subjects": ["S7", "S8"],

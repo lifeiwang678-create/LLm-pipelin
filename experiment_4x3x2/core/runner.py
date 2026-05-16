@@ -62,12 +62,13 @@ def build_experiment_config(args: Namespace) -> dict:
         "dataset": args.dataset,
     }
     if args.Input == "extra_knowledge":
-        if args.knowledge_file:
-            input_config["knowledge_file"] = args.knowledge_file
-        if args.knowledge_text:
-            input_config["knowledge_text"] = args.knowledge_text
-        if args.knowledge_mode:
-            input_config["knowledge_mode"] = args.knowledge_mode
+        input_config.update(
+            {
+                "knowledge_file": getattr(args, "knowledge_file", None),
+                "knowledge_text": getattr(args, "knowledge_text", ""),
+                "knowledge_mode": getattr(args, "knowledge_mode", None),
+            }
+        )
 
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",

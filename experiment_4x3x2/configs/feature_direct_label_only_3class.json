@@ -1,21 +1,17 @@
-{
-  "run_name": "E3_raw_fewshot_label_only",
-  "labels": [1, 2],
+﻿{
+  "run_name": "wesad_feature_direct_label_only_3class",
+  "labels": [1, 2, 3],
   "output_dir": "outputs_modular",
   "data": {
-    "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
-    "test_subjects": ["S7", "S8"]
+    "subjects": ["S2", "S3"]
   },
   "input": {
-    "type": "raw_data",
-    "data_dir": ".",
-    "window_sec": 10.0,
-    "stride_sec": 15.0
+    "type": "feature_description",
+    "data_dir": "..",
+    "pattern": "*_features_paperstyle.csv"
   },
   "lm_usage": {
-    "type": "few_shot",
-    "n_per_class": 2,
-    "random_state": 42
+    "type": "direct"
   },
   "output": {
     "type": "label_only"
@@ -26,11 +22,11 @@
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
     "max_tokens": 128,
-    "timeout": 60
+    "timeout": 30
   },
   "evaluation": {
     "balanced_per_label": 10,
-    "log_every": 5
+    "log_every": 10
   }
 }
 

@@ -20,6 +20,11 @@ def build_input_provider(config: dict):
     dataset = config.get("dataset")
 
     if kind in {"raw", "raw_data"}:
+        if str(dataset or "").strip().upper() != "WESAD":
+            raise ValueError(
+                "RawDataInput is currently WESAD-specific. "
+                "HHAR and DREAMT require dataset-aware raw signal formatting before raw_data can be used."
+            )
         return RawDataInput()
 
     if kind in {"feature", "feature_description", "description"}:

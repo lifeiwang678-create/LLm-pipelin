@@ -7,14 +7,19 @@ __pycache__/
 
 # WESAD raw data and generated feature files
 S*/
+experiment_4x3x2/S*/
 *_features_paperstyle.csv
 *_features_final.csv
+experiment_4x3x2/*_features_paperstyle.csv
+experiment_4x3x2/*_features_final.csv
 
 # Generated outputs
 outputs*/
 sensorllm_wesad*/
 Results/*
 !Results/.gitkeep
+experiment_4x3x2/Results/*
+!experiment_4x3x2/Results/.gitkeep
 
 # Local dataset packages
 Dataset/*
@@ -30,6 +35,19 @@ Dataset/*
 !Dataset/HHAR/.gitkeep
 !Dataset/DREAMT/
 !Dataset/DREAMT/.gitkeep
+experiment_4x3x2/Dataset/*
+!experiment_4x3x2/Dataset/README.md
+!experiment_4x3x2/Dataset/__init__.py
+!experiment_4x3x2/Dataset/registry.py
+!experiment_4x3x2/Dataset/wesad_loader.py
+!experiment_4x3x2/Dataset/hhar_loader.py
+!experiment_4x3x2/Dataset/dreamt_loader.py
+!experiment_4x3x2/Dataset/WESAD/
+!experiment_4x3x2/Dataset/WESAD/.gitkeep
+!experiment_4x3x2/Dataset/HHAR/
+!experiment_4x3x2/Dataset/HHAR/.gitkeep
+!experiment_4x3x2/Dataset/DREAMT/
+!experiment_4x3x2/Dataset/DREAMT/.gitkeep
 
 # Local model checkpoints and large binary artifacts
 vicuna-7b-v1.5/

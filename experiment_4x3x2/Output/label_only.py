@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 
 class LabelOnlyOutput:
@@ -30,14 +29,9 @@ Return STRICT JSON only.
         }
 
     def _parse_label(self, text: str) -> tuple[int | None, str]:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            return None, "no_json_object"
-
-        try:
-            obj = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None, "invalid_json"
+        obj, error = self._parse_json_object(text)
+        if error:
+            return None, error
 
         if "predicted_state" not in obj:
             return None, "missing_predicted_state"
@@ -51,6 +45,17 @@ Return STRICT JSON only.
             return None, f"out_of_label_space:{pred}"
         return pred, ""
 
+    def _parse_json_object(self, text: str) -> tuple[dict | None, str]:
+        stripped = text.strip()
+        if not stripped:
+            return None, "empty_response"
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+        if not isinstance(obj, dict):
+            return None, "json_not_object"
+        return obj, ""
+
 
 __all__ = ["LabelOnlyOutput"]
-

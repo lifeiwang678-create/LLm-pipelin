@@ -1,4 +1,4 @@
-{
+﻿{
   "run_name": "wesad_raw_direct_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
@@ -7,7 +7,7 @@
   },
   "input": {
     "type": "raw_data",
-    "data_dir": ".",
+    "data_dir": "..",
     "window_sec": 10.0,
     "stride_sec": 15.0
   },
@@ -30,3 +30,4 @@
     "log_every": 5
   }
 }
+

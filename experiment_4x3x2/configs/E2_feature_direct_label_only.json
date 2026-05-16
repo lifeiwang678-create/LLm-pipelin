@@ -1,20 +1,17 @@
-{
-  "run_name": "wesad_feature_fewshot_label_only",
+﻿{
+  "run_name": "E2_feature_direct_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
   "data": {
-    "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
-    "test_subjects": ["S7", "S8"]
+    "subjects": ["S2", "S3"]
   },
   "input": {
     "type": "feature_description",
-    "data_dir": ".",
+    "data_dir": "..",
     "pattern": "*_features_paperstyle.csv"
   },
   "lm_usage": {
-    "type": "few_shot",
-    "n_per_class": 2,
-    "random_state": 42
+    "type": "direct"
   },
   "output": {
     "type": "label_only"
@@ -32,3 +29,5 @@
     "log_every": 10
   }
 }
+
+

@@ -1,29 +1,30 @@
-{
-  "run_name": "wesad_feature_multiagent_label_explanation",
+﻿{
+  "run_name": "wesad_feature_fewshot_label_only",
   "labels": [1, 2],
   "output_dir": "outputs_modular",
   "data": {
-    "subjects": ["S2", "S3"]
+    "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
+    "test_subjects": ["S7", "S8"]
   },
   "input": {
     "type": "feature_description",
-    "data_dir": ".",
+    "data_dir": "..",
     "pattern": "*_features_paperstyle.csv"
   },
   "lm_usage": {
-    "type": "multi_agent",
-    "agents": ["eda_agent", "cardio_resp_agent", "motion_temp_agent"],
-    "final_decider": "decision_maker"
+    "type": "few_shot",
+    "n_per_class": 2,
+    "random_state": 42
   },
   "output": {
-    "type": "label_explanation"
+    "type": "label_only"
   },
   "lm_client": {
     "api_url": "http://127.0.0.1:1234/v1",
     "api_key": "lm-studio",
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
-    "max_tokens": 192,
+    "max_tokens": 128,
     "timeout": 30
   },
   "evaluation": {
@@ -31,3 +32,4 @@
     "log_every": 10
   }
 }
+

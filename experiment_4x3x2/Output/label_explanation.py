@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
-
 from .label_only import LabelOnlyOutput
 
 
@@ -24,15 +21,10 @@ Return STRICT JSON only.
         explanation = ""
         has_explanation = False
 
-        match = re.search(r"\{.*?\}", text, re.DOTALL)
-        if match:
-            try:
-                obj = json.loads(match.group(0))
-                explanation = str(obj.get("explanation", "")).strip()
-                has_explanation = explanation != ""
-            except json.JSONDecodeError:
-                explanation = ""
-                has_explanation = False
+        obj, obj_error = self._parse_json_object(text)
+        if not obj_error and obj is not None:
+            explanation = str(obj.get("explanation", "")).strip()
+            has_explanation = explanation != ""
 
         return {
             "label": label,
