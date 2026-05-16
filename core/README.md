@@ -22,11 +22,13 @@ Install dependencies from the repository root before running experiments:
 pip install -r requirements.txt
 ```
 
-`main.py` saves compact CSV files to `Results/`, for example:
+By default, `main.py` saves compact CSV files to `Results/`, for example:
 
 ```text
 WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
+
+Config files can override the result folder with `output_dir`.
 
 The config-based runner uses the same shared execution logic:
 
@@ -60,7 +62,7 @@ These names are used in LM prompts and in `classification_report`; predictions s
 It describes channel-aware temporal patterns in text and stays inside the official prompt-compatible 4 x 3 x 2 framework.
 `extra_knowledge` is implemented in the official `Input/extra_knowledge.py` module.
 
-Parsing failures are not converted to a default label. They are saved as invalid predictions and excluded from accuracy.
+Parsing failures are not converted to a default label. They are saved as invalid predictions, excluded from valid-only metrics, and counted as wrong in all-samples metrics.
 
 Evaluation metrics include valid-only Accuracy / Macro-F1 / Weighted-F1 and all-samples Accuracy / Macro-F1 / Weighted-F1 where invalid predictions are counted as wrong. Both valid-only and all-samples confusion matrices are saved.
 Metrics JSON also includes `usage_summary`, `cost_estimate`, and `scaling_estimate`; prediction CSV files include per-sample LLM call count, tokens, and elapsed runtime.
@@ -87,6 +89,21 @@ For debug runs, use balanced sampling:
 
 Few-shot runs must explicitly set both `data.train_subjects` and `data.test_subjects`; overlapping subjects are rejected.
 Few-shot also requires at least `n_per_class` training examples for every label in `labels`; insufficient examples raise a clear error instead of silently producing an imbalanced prompt.
+
+Example few-shot config data block:
+
+```json
+{
+  "data": {
+    "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
+    "test_subjects": ["S7", "S8"]
+  },
+  "lm_usage": {
+    "type": "few_shot",
+    "n_per_class": 2
+  }
+}
+```
 
 ## Experiment Matrix
 

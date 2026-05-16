@@ -2,7 +2,7 @@
 
 This repository contains a modular experiment framework for stress/activity classification. The experiment is organized into five visible parts:
 
-- `Dataset/`: local packaged datasets, not uploaded to GitHub
+- `Dataset/`: dataset loaders and optional local dataset folders
 - `Input/`: concrete input representations
 - `LM/`: concrete LLM usage strategies
 - `Output/`: concrete output parsers
@@ -15,9 +15,9 @@ This repository contains a modular experiment framework for stress/activity clas
 ```text
 .
 |-- Dataset/
-|   |-- WESAD/
-|   |-- HHAR/
-|   |-- DREAMT/
+|   |-- WESAD/        optional local data folder
+|   |-- HHAR/         default HHAR local data folder
+|   |-- DREAMT/       default DREAMT local data folder
 |   |-- registry.py
 |   |-- wesad_loader.py
 |   |-- hhar_loader.py
@@ -56,6 +56,9 @@ This repository contains a modular experiment framework for stress/activity clas
 |   |-- evaluation.py
 |   |-- lm_client.py
 |   |-- schema.py
+|   |-- inputs.py      compatibility forwarding module
+|   |-- lm_usage.py    compatibility forwarding module
+|   |-- outputs.py     compatibility forwarding module
 |
 |-- Results/
 |-- configs/
@@ -63,6 +66,8 @@ This repository contains a modular experiment framework for stress/activity clas
 |-- run_experiment.py
 |-- requirements.txt
 ```
+
+Current default dataset locations are defined in `Dataset/registry.py`. WESAD defaults to repository-root subject folders such as `S2/`, `S3/`, ... (`data_dir: "."`). HHAR defaults to `Dataset/HHAR/`, and DREAMT defaults to `Dataset/DREAMT/`. You can override `dataset.data_dir` in a config file.
 
 ## Installation
 
@@ -81,6 +86,7 @@ Core dependencies include `numpy`, `pandas`, `scikit-learn`, `requests`, `PyYAML
 | `Dataset/wesad_loader.py` | WESAD reading, window slicing, and sampling-rate alignment |
 | `Dataset/hhar_loader.py` | HHAR CSV reading, window slicing, and label mapping |
 | `Dataset/dreamt_loader.py` | DREAMT CSV reading, window slicing, and label mapping |
+| `Dataset/registry.py` | Dataset defaults such as data directory, default subjects, and loader kwargs |
 | `core/signal_utils.py` | z-score, downsampling, slicing, packing, and feature-stat helpers |
 | `core/schema.py` | `SensorSample`, `LLMSample`, and dataset-specific label names |
 | `Input/raw_data.py` | Convert `SensorSample.signals` into raw sequence text |
@@ -88,14 +94,18 @@ Core dependencies include `numpy`, `pandas`, `scikit-learn`, `requests`, `PyYAML
 | `Input/feature_description/factory.py` | Dataset-aware Feature Description selector |
 | `Input/feature_description/feature_functions.py` | Shared feature extraction and formatting helpers |
 | `Input/feature_description/basic_feature_description.py` | Basic Feature Description base class |
-| `Input/feature_description/wesad_feature_description.py` | WESAD-specific paper-style Feature Description class, based on `preprocess_original_paper_4.22.py` |
+| `Input/feature_description/wesad_feature_description.py` | WESAD-specific paper-style Feature Description class |
 | `Input/feature_description/hhar_feature_description.py` | HHAR-specific Feature Description class |
 | `Input/feature_description/dreamt_feature_description.py` | DreaMT-specific Feature Description class |
 | `LM/direct.py` | Build direct-classification prompts |
+| `LM/few_shot.py` | Build Brown-style prompt-level few-shot / in-context classification prompts |
+| `LM/multi_agent.py` | Run three-call agent-based reasoning: evidence extraction, candidate evaluation, final decision |
 | `Output/label_only.py` | Label-only output instruction and parser |
 | `Output/label_explanation.py` | Label + explanation output instruction and parser |
-| `Evaluation/metrics.py` | Accuracy, Macro-F1, Weighted-F1, confusion matrix, and result saving |
+| `Evaluation/metrics.py` | Accuracy, Macro-F1, Weighted-F1, confusion matrices, usage summary, cost estimate, and result saving |
+| `core/lm_client.py` | OpenAI-compatible LM Studio client with per-call usage/runtime logging |
 | `core/runner.py` | Shared experiment executor that combines Dataset + Input + LM + Output + Evaluation |
+| `core/inputs.py`, `core/lm_usage.py`, `core/outputs.py` | Compatibility forwarding modules; they keep no independent experiment logic |
 
 ## Dataset-Specific Labels
 
@@ -144,7 +154,7 @@ By default, `main.py` evaluates all loaded samples for the selected subjects. Us
 Feature-description few-shot example:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only -llm qwen2.5-14b-instruct
+python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --train-subjects S2 S3 S4 S5 S6 --test-subjects S7 S8 -llm qwen2.5-14b-instruct
 ```
 
 Small debug run:
@@ -159,11 +169,13 @@ Encoded time-series direct-prediction example:
 python main.py -dataset WESAD -Input encoded_time_series -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
-Results are saved under `Results/` using this naming style:
+By default, `main.py` saves results under `Results/` using this naming style:
 
 ```text
 WESAD_raw_data_direct_label_only_20260512213815.csv
 ```
+
+Config files can override this with `output_dir`.
 
 The metrics JSON includes:
 
@@ -191,7 +203,7 @@ The prediction CSV also includes per-sample usage columns:
 python run_experiment.py --config configs/E1_raw_direct_label_only.json
 ```
 
-Future grid configs can use this shape:
+Future grid configs can use this shape for direct and multi-agent runs:
 
 ```yaml
 base:
@@ -204,7 +216,28 @@ base:
     log_every: 1
 grid:
   input: [raw_data, feature_description]
-  lm_usage: [direct, few_shot, multi_agent]
+  lm_usage: [direct, multi_agent]
+  output: [label_only, label_explanation]
+```
+
+Few-shot configs must use explicit non-overlapping train/test subjects:
+
+```yaml
+base:
+  dataset: WESAD
+  labels: [1, 2]
+  data:
+    train_subjects: [S2, S3, S4, S5, S6]
+    test_subjects: [S7, S8]
+  lm_usage:
+    n_per_class: 2
+    random_state: 42
+  evaluation:
+    balanced_per_label: 1
+    log_every: 1
+grid:
+  input: [raw_data, feature_description]
+  lm_usage: [few_shot]
   output: [label_only, label_explanation]
 ```
 
@@ -227,10 +260,9 @@ This keeps `raw_data`, `feature_description`, `encoded_time_series`, and `extra_
 The following files are intentionally not uploaded to GitHub:
 
 - WESAD subject folders such as `S2/`, `S3/`, ...
+- optional local dataset folders such as `Dataset/WESAD/`, `Dataset/HHAR/`, and `Dataset/DREAMT/`
 - feature CSV files such as `S2_features_paperstyle.csv`
 - generated output folders and CSVs
-- SensorLLM fold files such as `sensorllm_wesad_binary_loso/fold_S2/eval_data.pkl`
-- SensorLLM checkpoints such as `sensorllm_wesad_binary_output_formal/fold_S2/`
 - local base models such as Chronos/TinyLlama paths referenced in config files
 
 ## Development Notes
