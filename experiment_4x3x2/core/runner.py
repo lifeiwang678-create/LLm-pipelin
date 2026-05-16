@@ -54,9 +54,6 @@ def build_experiment_config(args: Namespace) -> dict:
         "data_dir": dataset_cfg["data_dir"],
         "loader_kwargs": loader_kwargs,
     }
-    if args.dataset == "WESAD" and args.Input == "feature_description":
-        dataset_config["loader_kwargs"]["window_sec"] = 60.0
-
     input_config = {
         "type": args.Input,
         "dataset": args.dataset,
@@ -304,18 +301,7 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     normalized["labels"] = [int(label) for label in normalized.get("labels", [1, 2])]
 
     raw_dataset_config = normalized.get("dataset")
-    has_explicit_loader_kwargs = (
-        isinstance(raw_dataset_config, dict) and "loader_kwargs" in raw_dataset_config
-    )
     dataset_config = _resolve_dataset_config(normalized, dataset_name)
-    input_type = str((normalized.get("input") or {}).get("type", "feature_description")).lower()
-    if dataset_config["name"] == "WESAD" and input_type == "feature_description":
-        loader_kwargs = dict(dataset_config.get("loader_kwargs", {}))
-        if not has_explicit_loader_kwargs:
-            loader_kwargs["window_sec"] = 60.0
-        else:
-            loader_kwargs.setdefault("window_sec", 60.0)
-        dataset_config["loader_kwargs"] = loader_kwargs
     normalized["dataset"] = dataset_config
 
     input_config = dict(normalized.get("input") or {})

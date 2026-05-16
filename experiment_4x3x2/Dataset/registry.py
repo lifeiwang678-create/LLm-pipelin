@@ -13,8 +13,9 @@ DATASET_REGISTRY = {
         "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
         "test_subjects": ["S7", "S8"],
         "loader_kwargs": {
-            "window_sec": 10.0,
-            "stride_sec": 15.0,
+            "physiology_window_sec": 60.0,
+            "acc_window_sec": 5.0,
+            "stride_sec": 0.25,
         },
     },
     "HHAR": {
@@ -57,7 +58,16 @@ def build_dataset_loader(config: dict):
     kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
     kwargs.update(config.get("loader_kwargs", {}))
 
-    for key in ("window_sec", "stride_sec", "window_size", "stride_size", "label_map"):
+    loader_keys = (
+        "physiology_window_sec",
+        "acc_window_sec",
+        "stride_sec",
+        "window_sec",
+        "window_size",
+        "stride_size",
+        "label_map",
+    )
+    for key in loader_keys:
         if key in config:
             kwargs[key] = config[key]
 

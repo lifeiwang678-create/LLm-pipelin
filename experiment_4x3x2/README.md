@@ -72,6 +72,18 @@ The old `experiment_pipeline/` path is no longer part of the official framework.
 
 Current default dataset locations are defined in `Dataset/registry.py`. WESAD defaults to the outer repository's subject folders such as `../S2/`, `../S3/`, ... (`data_dir: ".."`). HHAR defaults to `Dataset/HHAR/`, and DREAMT defaults to `Dataset/DREAMT/`. You can override `dataset.data_dir` in a config file.
 
+WESAD uses the paper-style windowing defaults in the shared dataset registry:
+
+```json
+{
+  "physiology_window_sec": 60.0,
+  "acc_window_sec": 5.0,
+  "stride_sec": 0.25
+}
+```
+
+`window_sec` is kept only as a legacy compatibility argument. New configs should use `physiology_window_sec` and `acc_window_sec` explicitly.
+
 ## Installation
 
 Install the Python dependencies first:

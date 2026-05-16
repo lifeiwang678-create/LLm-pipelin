@@ -8,8 +8,9 @@
   "input": {
     "type": "raw_data",
     "data_dir": "..",
-    "window_sec": 10.0,
-    "stride_sec": 15.0
+    "physiology_window_sec": 60.0,
+    "acc_window_sec": 5.0,
+    "stride_sec": 0.25
   },
   "lm_usage": {
     "type": "direct"

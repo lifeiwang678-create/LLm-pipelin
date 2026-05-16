@@ -12,7 +12,7 @@ from core.runner import run_experiment
 
 def load_config(path: str | Path) -> dict:
     config_path = Path(path)
-    text = config_path.read_text(encoding="utf-8")
+    text = config_path.read_text(encoding="utf-8-sig")
     suffix = config_path.suffix.lower()
     if suffix in {".yaml", ".yml"}:
         try:
@@ -126,7 +126,16 @@ def _carry_legacy_input_loader_settings(config: dict) -> None:
     if "data_dir" not in dataset and input_config.get("data_dir"):
         dataset["data_dir"] = input_config["data_dir"]
     loader_kwargs = dict(dataset.get("loader_kwargs") or {})
-    for key in ("window_sec", "stride_sec", "window_size", "stride_size", "label_map"):
+    loader_keys = (
+        "physiology_window_sec",
+        "acc_window_sec",
+        "stride_sec",
+        "window_sec",
+        "window_size",
+        "stride_size",
+        "label_map",
+    )
+    for key in loader_keys:
         if key in input_config:
             loader_kwargs.setdefault(key, input_config[key])
     if loader_kwargs:
