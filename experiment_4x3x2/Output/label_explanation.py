@@ -16,13 +16,29 @@ Return STRICT JSON only.
 }}"""
 
     def parse(self, text: str) -> dict:
-        label, error = self._parse_label(text)
+        # 旧版调用了两次 _parse_json_object (一次在 _parse_label 里、一次单独取 explanation),
+        # 这里改为只解析一次,避免重复 JSON 解析开销和回退路径不一致的隐患。
+        obj, obj_error = self._parse_json_object(text)
 
+        label: int | None = None
+        label_error = obj_error
         explanation = ""
         has_explanation = False
 
-        obj, obj_error = self._parse_json_object(text)
-        if not obj_error and obj is not None:
+        if not obj_error and isinstance(obj, dict):
+            if "predicted_state" not in obj:
+                label_error = "missing_predicted_state"
+            else:
+                try:
+                    pred = int(obj["predicted_state"])
+                    if pred in self.labels:
+                        label = pred
+                        label_error = ""
+                    else:
+                        label_error = f"out_of_label_space:{pred}"
+                except (TypeError, ValueError):
+                    label_error = "non_integer_predicted_state"
+
             explanation = str(obj.get("explanation", "")).strip()
             has_explanation = explanation != ""
 
@@ -31,7 +47,7 @@ Return STRICT JSON only.
             "explanation": explanation,
             "valid": label is not None,
             "has_explanation": has_explanation,
-            "parse_error": error,
+            "parse_error": label_error,
         }
 
 

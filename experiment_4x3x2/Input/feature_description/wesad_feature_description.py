@@ -288,6 +288,8 @@ def extract_resp_features(resp_seg, fs: int) -> dict[str, float | None]:
         min_dist = int(fs * 1.5)
         peaks, _ = find_peaks(rf, distance=min_dist)
         troughs, _ = find_peaks(-rf, distance=min_dist)
+        # 粗略 resp_rate = 峰数 / 时长(分钟),作为下面更精确算法 (60 / 平均周期) 的兜底。
+        # 如果后面 inhale 列表为空 (找不到完整呼吸周期),就保留这个粗估,不被覆盖成 None。
         if len(peaks) >= 2:
             feats["resp_rate"] = float(len(peaks) / (len(resp_seg) / fs / 60.0))
         feats["resp_range"] = float(np.ptp(rf))
@@ -319,6 +321,8 @@ def extract_resp_features(resp_seg, fs: int) -> dict[str, float | None]:
             feats["resp_ie_ratio"] = _safe_div(float(np.mean(inhale)), float(np.mean(exhale)))
             feats["resp_insp_vol"] = float(np.mean(insp_vol))
             feats["resp_duration"] = float(np.mean(duration))
+            # 优先用更精确的 60 / 平均周期 覆盖前面的粗估 (峰数 / 分钟),
+            # 这是有意覆盖。如需 debug 可对比两种 resp_rate 的差异。
             feats["resp_rate"] = _safe_div(60.0, float(np.mean(duration)))
     except Exception:
         pass

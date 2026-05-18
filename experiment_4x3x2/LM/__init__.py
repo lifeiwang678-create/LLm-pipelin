@@ -43,7 +43,10 @@ def build_lm_usage(
         )
 
     if kind == "multi_agent":
-        return MultiAgentUsage(
+        # intermediate_max_tokens 由 runner.build_experiment_config 注入 (默认 1024)。
+        # 这里仅在显式提供时透传,缺省走 MultiAgentUsage 的类内默认,保证旧配置仍能跑。
+        intermediate_max_tokens = config.get("intermediate_max_tokens")
+        kwargs = dict(
             labels=labels,
             input_name=input_name,
             output_instructions=output_instructions,
@@ -51,6 +54,9 @@ def build_lm_usage(
             final_decider=config.get("final_decider", "final_decision_agent"),
             dataset=dataset,
         )
+        if intermediate_max_tokens is not None:
+            kwargs["intermediate_max_tokens"] = int(intermediate_max_tokens)
+        return MultiAgentUsage(**kwargs)
 
     raise ValueError(f"Unknown LM usage type: {kind}")
 

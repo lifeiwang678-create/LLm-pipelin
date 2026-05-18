@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace
+from datetime import datetime
 from pathlib import Path
 
 from Evaluation import label_distribution, limit_samples, summarize_and_save
@@ -30,6 +32,7 @@ def build_experiment_config(args: Namespace) -> dict:
     max_tokens = 384 if long_input else 128
     default_few_shot_n = 1 if long_input else 2
     default_example_max_chars = 1500 if long_input else None
+    default_intermediate_max_tokens = 1024
     loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
 
     if args.LM == "few_shot":
@@ -77,11 +80,23 @@ def build_experiment_config(args: Namespace) -> dict:
         "input": input_config,
         "lm_usage": {
             "type": args.LM,
-            "n_per_class": args.few_shot_n_per_class or default_few_shot_n,
+            # 旧实现写的是 `args.few_shot_n_per_class or default`,这样用户传 0 会被吞掉。
+            # 改成显式 None 判断,让 0 可以原样传递给下游 (虽然 FewShotUsage 仍会拒绝 <1)。
+            "n_per_class": (
+                args.few_shot_n_per_class
+                if args.few_shot_n_per_class is not None
+                else default_few_shot_n
+            ),
             "random_state": 42,
             "example_max_chars": args.few_shot_example_max_chars
             if args.few_shot_example_max_chars is not None
             else default_example_max_chars,
+            # multi_agent 前两步用更大的 token 上限,避免结构化 JSON 被全局 max_tokens 截断。
+            "intermediate_max_tokens": (
+                int(args.multi_agent_intermediate_max_tokens)
+                if getattr(args, "multi_agent_intermediate_max_tokens", None) is not None
+                else default_intermediate_max_tokens
+            ),
         },
         "output": {
             "type": args.output,
@@ -171,7 +186,23 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     print(f"Output: {output_handler.name}")
     print(f"Eval samples: {len(eval_samples)}")
 
+    # multi_agent 中间步骤的输出 (evidence_extraction、candidate_evaluation) 体量大、
+    # 且是嵌套结构,旧实现直接写进 sample.meta 然后展开到 CSV 列里,既污染列、又会
+    # 把同一 sample 在多次实验复用时串台。这里改为按 run 写到一个 JSONL 侧文件,
+    # 主 CSV 只保留预测结果和已知安全的元数据。
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    trace_stem = f"{config['run_name']}_{timestamp}"
+    trace_path = output_dir / f"{trace_stem}_traces.jsonl"
+    trace_path.unlink(missing_ok=True)
+    trace_written = False
+
     records = []
+    # 仅保留这些已知安全的 meta key 写进 CSV,避免新 Input/LM 模块往 meta 里塞嵌套结构
+    # 后悄悄把 CSV 列结构搞乱。新增 meta 字段需要显式登记到这里。
+    sample_meta_safe_keys = {"input_type", "input_canonical_type", "data_path", "qa_path",
+                             "data_index", "source", "local_index", "start_index", "end_index"}
     for idx, sample in enumerate(eval_samples, 1):
         usage_start = len(getattr(client, "usage_records", []))
         if hasattr(lm_usage, "run_agent_pipeline"):
@@ -183,6 +214,23 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         llm_usage.update(_estimate_sample_cost(llm_usage, config))
         parsed = output_handler.parse(raw_response)
         valid = bool(parsed.get("valid", parsed.get("label") is not None))
+
+        # 如果 LM usage 暴露了 last_trace (目前只有 MultiAgentUsage 会),按行追加到 JSONL,
+        # 然后立即清空,防止下一条样本误用上一条的 trace。
+        trace = getattr(lm_usage, "last_trace", None)
+        if trace:
+            with trace_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "sample_index": idx,
+                    "subject": sample.subject,
+                    "y_true": sample.label,
+                    "trace": trace,
+                }, ensure_ascii=False) + "\n")
+            trace_written = True
+            if hasattr(lm_usage, "last_trace"):
+                lm_usage.last_trace = None
+
+        flat_meta = {k: v for k, v in sample.meta.items() if k in sample_meta_safe_keys}
         records.append(
             {
                 "subject": sample.subject,
@@ -193,12 +241,17 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
                 "explanation": parsed.get("explanation", ""),
                 "raw_response": raw_response,
                 **llm_usage,
-                **sample.meta,
+                **flat_meta,
             }
         )
 
         if idx % int(eval_cfg.get("log_every", 10)) == 0 or idx == len(eval_samples):
             print(f"{idx}/{len(eval_samples)} done")
+
+    # 把 trace 文件路径写入 config,让 summarize_and_save 一起记到 metrics.json,方便事后定位
+    if trace_written:
+        config = dict(config)
+        config["agent_trace_path"] = str(trace_path)
 
     metrics = summarize_and_save(
         records,
@@ -207,6 +260,9 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         run_name=config["run_name"],
         config=config,
     )
+    if trace_written:
+        metrics["agent_trace_path"] = str(trace_path)
+        print(f"Agent traces (multi_agent intermediate outputs): {trace_path}")
     print("=" * 50)
     if metrics["accuracy_valid_only"] is None:
         print("Accuracy valid-only: n/a (no valid predictions)")

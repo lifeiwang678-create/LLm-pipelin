@@ -14,6 +14,7 @@ class LMStudioClient:
         temperature: float = 0.0,
         max_tokens: int = 128,
         timeout: int = 600,
+        system_message: str | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
@@ -21,19 +22,34 @@ class LMStudioClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        # 新增 system_message:换到 GPT-4 / Claude / Llama 时,加 system 角色 prompt
+        # 能显著稳定 JSON 输出。默认 None 保持对 qwen2.5-14b 的旧行为不变。
+        self.system_message = system_message
         self.last_usage: dict = {}
         self.usage_records: list[dict] = []
 
-    def complete(self, prompt: str) -> str:
+    def complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        # 新增 max_tokens / temperature 关键字覆盖:multi_agent 的前两个 agent
+        # 要输出长结构化 JSON,需要比 client 默认更大的 token 上限;为此提供 per-call 覆盖。
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        messages: list[dict] = []
+        if self.system_message:
+            messages.append({"role": "system", "content": self.system_message})
+        messages.append({"role": "user", "content": prompt})
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else float(temperature),
+            "max_tokens": int(max_tokens) if max_tokens is not None else self.max_tokens,
         }
         start = time.perf_counter()
         response = requests.post(

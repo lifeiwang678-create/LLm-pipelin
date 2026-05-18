@@ -62,6 +62,17 @@ def parse_args() -> argparse.Namespace:
         help="Maximum characters kept from each few-shot example input.",
     )
 
+    # multi_agent 的前两个 agent (evidence / candidate_evaluation) 输出结构化 JSON,
+    # 用全局 max_tokens (128/384) 会被截断成残缺 JSON,导致后续 agent 看到脏输入。
+    # 这里允许在 CLI 显式调大,默认 1024。
+    parser.add_argument(
+        "--multi-agent-intermediate-max-tokens",
+        type=int,
+        default=None,
+        help="Max tokens for multi_agent intermediate steps (evidence/evaluation). "
+             "Defaults to 1024 to avoid truncating structured JSON outputs.",
+    )
+
     parser.add_argument(
         "--knowledge-file",
         help="Optional external knowledge file for -Input extra_knowledge.",

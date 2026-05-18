@@ -217,16 +217,36 @@ class EmbeddingAlignmentInput:
         key = self._normalize_key(raw_name)
         arr = np.asarray(values, dtype=object)
 
-        if key in {"chest_acc", "wrist_acc", "acc"} and arr.ndim == 2 and (arr.shape[1] >= 3 or arr.shape[0] >= 3):
-            location = "chest" if key.startswith("chest") else "wrist" if key.startswith("wrist") else "unknown"
-            prefix = f"{location}_acc" if location != "unknown" else "acc"
-            axis_values = [arr[:, idx] for idx in range(3)] if arr.shape[1] >= 3 else [arr[idx, :] for idx in range(3)]
-            expanded = []
-            for axis, idx, values_1d in zip(["x", "y", "z"], [0, 1, 2], axis_values):
-                meta_key = f"{prefix}_{axis}"
-                meta = metadata.get(meta_key) or ChannelMetadata(f"ACC_{axis.upper()}", "accelerometer", location, None, idx)
-                expanded.append((meta.channel, values_1d, meta))
-            return expanded
+        if key in {"chest_acc", "wrist_acc", "acc"} and arr.ndim == 2:
+            # 严格判定 ACC 形状,避免在 HHAR / DREAMT 上踩坑:
+            # - 标准布局 (N, 3):N 行样本,每行 [x, y, z],按列切。
+            # - 转置布局 (3, N):3 行轴 × N 时间步,按行切。
+            # 旧实现用 `shape[1] >= 3 or shape[0] >= 3`,在 (N, 1) 或 (3, N>3)
+            # 等情况下会同时命中两个条件,然后默认走列切,取出错误的切片。
+            n_rows, n_cols = arr.shape
+            if n_cols == 3:
+                axis_values = [arr[:, idx] for idx in range(3)]
+            elif n_rows == 3 and n_cols != 3:
+                axis_values = [arr[idx, :] for idx in range(3)]
+            else:
+                axis_values = None
+
+            if axis_values is not None:
+                location = (
+                    "chest" if key.startswith("chest")
+                    else "wrist" if key.startswith("wrist")
+                    else "unknown"
+                )
+                prefix = f"{location}_acc" if location != "unknown" else "acc"
+                expanded = []
+                for axis, idx, values_1d in zip(["x", "y", "z"], [0, 1, 2], axis_values):
+                    meta_key = f"{prefix}_{axis}"
+                    meta = metadata.get(meta_key) or ChannelMetadata(
+                        f"ACC_{axis.upper()}", "accelerometer", location, None, idx
+                    )
+                    expanded.append((meta.channel, values_1d, meta))
+                return expanded
+            # 形状不符合 ACC 三轴布局时不强行切,落到下面的通用分支以便至少能输出一个通道。
 
         meta = metadata.get(key) or self._infer_channel_metadata(raw_name)
         if meta is None:
