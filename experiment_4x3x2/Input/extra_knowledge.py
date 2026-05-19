@@ -122,7 +122,8 @@ class ExtraKnowledgeInput:
         base_sample = base_input.transform(sample)
         retrieved_examples = self._get_retrieved_examples(sample, base_sample)
 
-        meta = dict(base_sample.meta)
+    
+        meta = dict(base_sample.meta) if isinstance(base_sample.meta, dict) else {}
         meta["base_input_type"] = meta.get("input_type", base_input.name)
         meta["input_type"] = self.name
         meta["knowledge_dataset"] = dataset

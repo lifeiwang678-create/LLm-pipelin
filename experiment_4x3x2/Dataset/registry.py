@@ -9,6 +9,7 @@ DATASET_REGISTRY = {
     "WESAD": {
         "loader": WESADLoader,
         "data_dir": "..",
+        "labels": [0, 1],
         "subjects": ["S2", "S3"],
         "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
         "test_subjects": ["S7", "S8"],
@@ -21,23 +22,30 @@ DATASET_REGISTRY = {
     "HHAR": {
         "loader": HHARLoader,
         "data_dir": "Dataset/HHAR",
+        "labels": [0, 1],
         "subjects": None,
         "train_subjects": None,
         "test_subjects": None,
         "loader_kwargs": {
             "window_size": 128,
             "stride_size": 64,
+            "sampling_rate": 64.0,
+            "min_samples_per_window": 10,
+            "max_gap_sec": 5.0,
         },
     },
     "DREAMT": {
         "loader": DREAMTLoader,
         "data_dir": "Dataset/DREAMT",
+        "labels": [0, 1],
         "subjects": None,
         "train_subjects": None,
         "test_subjects": None,
         "loader_kwargs": {
-            "window_size": 128,
-            "stride_size": 64,
+            "sampling_rate": 64,
+            "epoch_seconds": 30.0,
+            "stride_seconds": 30.0,
+            "min_epoch_fraction": 0.5,
         },
     },
 }
@@ -65,7 +73,16 @@ def build_dataset_loader(config: dict):
         "window_sec",
         "window_size",
         "stride_size",
+        "sampling_rate",
+        "epoch_seconds",
+        "stride_seconds",
+        "min_epoch_fraction",
+        "min_samples_per_window",
+        "max_gap_sec",
         "label_map",
+        "skip_artifact_epochs",
+        "include_gyroscope",
+        "max_rows",
     )
     for key in loader_keys:
         if key in config:

@@ -6,19 +6,16 @@ DEFAULT_LABEL_DATASET = "WESAD"
 
 LABEL_NAMES_BY_DATASET = {
     "WESAD": {
-        1: "Baseline",
-        2: "Stress",
-        3: "Amusement",
+        0: "no stress",
+        1: "stress",
     },
     "HHAR": {
-        1: "Static activity",
-        2: "Dynamic activity",
-        3: "Stairs activity",
+        0: "walking downstairs",
+        1: "walking upstairs",
     },
     "DREAMT": {
-        1: "Baseline/Neutral/Relax",
-        2: "Stress",
-        3: "Amusement/Happy",
+        0: "wake",
+        1: "sleep",
     },
 }
 

@@ -10,6 +10,26 @@ from core.schema import SensorSample
 from core.signal_utils import get_segment
 
 
+WESAD_BINARY_LABEL_MAP = {
+    1: 0,  # baseline -> no stress
+    2: 1,  # stress -> stress
+    3: 0,  # amusement -> no stress
+    4: 0,  # meditation -> no stress
+    6: 0,  # recovery-like non-stress segment in local processed labels
+    7: 0,  # recovery-like non-stress segment in local processed labels
+}
+
+WESAD_ORIGINAL_STATE_NAMES = {
+    0: "undefined/transient",
+    1: "baseline",
+    2: "stress",
+    3: "amusement",
+    4: "meditation",
+    6: "recovery",
+    7: "recovery",
+}
+
+
 class WESADLoader:
     name = "WESAD"
 
@@ -20,6 +40,7 @@ class WESADLoader:
         acc_window_sec: float = 5.0,
         stride_sec: float = 0.25,
         window_sec: float | None = None,
+        label_map: dict[int, int] | None = None,
     ) -> None:
         """
         Paper-style WESAD windowing protocol.
@@ -42,6 +63,7 @@ class WESADLoader:
         self.physiology_window_sec = float(window_sec if window_sec is not None else physiology_window_sec)
         self.acc_window_sec = float(acc_window_sec)
         self.stride_sec = float(stride_sec)
+        self.label_map = {int(k): int(v) for k, v in (label_map or WESAD_BINARY_LABEL_MAP).items()}
 
     def load(self, subjects: Iterable[str] | None, labels: list[int]) -> list[SensorSample]:
         subject_list = list(subjects or self._discover_subjects())
@@ -83,6 +105,7 @@ class WESADLoader:
         wrist_eda = np.asarray(wrist["EDA"]).ravel()
         wrist_temp = np.asarray(wrist["TEMP"]).ravel()
         wrist_acc = np.asarray(wrist["ACC"])
+        mapped_label_series = self._map_label_series(label_series)
 
         fs_chest = 700
         fs_wrist_bvp = 64
@@ -98,9 +121,14 @@ class WESADLoader:
 
         samples: list[SensorSample] = []
         valid_labels = tuple(int(label) for label in labels_to_keep)
+        print(f"WESAD label distribution before binary mapping ({subject}): {self._label_distribution(label_series)}")
+        print(
+            f"WESAD label distribution after binary mapping ({subject}): "
+            f"{self._label_distribution(mapped_label_series[mapped_label_series >= 0])}"
+        )
 
         for seg_start, seg_end, label_value in self._iter_contiguous_label_segments(
-            label_series,
+            mapped_label_series,
             valid_labels=valid_labels,
         ):
             # Paper-style rule:
@@ -113,6 +141,7 @@ class WESADLoader:
 
             for center_idx in centers:
                 time_sec = center_idx / fs_chest
+                original_label = int(label_series[center_idx])
 
                 chest_acc_center = center_idx
                 chest_phys_center = center_idx
@@ -195,6 +224,10 @@ class WESADLoader:
                         label=int(label_value),
                         signals=signals,
                         meta={
+                            "sample_id": f"WESAD_{subject}_{int(center_idx)}",
+                            "true_label": int(label_value),
+                            "original_label": original_label,
+                            "original_state": WESAD_ORIGINAL_STATE_NAMES.get(original_label, str(original_label)),
                             "time_sec": round(float(time_sec), 3),
                             "center_index": int(center_idx),
                             "source": str(pkl_path),
@@ -207,6 +240,19 @@ class WESADLoader:
                 )
 
         return samples
+
+    def _map_label_series(self, labels: np.ndarray) -> np.ndarray:
+        mapped = np.full(np.asarray(labels).shape, fill_value=-1, dtype=int)
+        for original_label, binary_label in self.label_map.items():
+            mapped[np.asarray(labels) == int(original_label)] = int(binary_label)
+        return mapped
+
+    @staticmethod
+    def _label_distribution(labels: np.ndarray) -> dict[int, int]:
+        if len(labels) == 0:
+            return {}
+        values, counts = np.unique(np.asarray(labels, dtype=int), return_counts=True)
+        return {int(value): int(count) for value, count in zip(values, counts)}
 
     @staticmethod
     def _iter_contiguous_label_segments(
@@ -246,4 +292,4 @@ class WESADLoader:
             yield start, len(labels), int(current_label)
 
 
-__all__ = ["WESADLoader"]
+__all__ = ["WESADLoader", "WESAD_BINARY_LABEL_MAP", "WESAD_ORIGINAL_STATE_NAMES"]

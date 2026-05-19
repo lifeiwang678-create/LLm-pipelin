@@ -5,6 +5,7 @@ from .label_explanation import LabelExplanationOutput
 
 
 OUTPUT_REGISTRY = {
+    "label": LabelOnlyOutput,
     "label_only": LabelOnlyOutput,
     "label_explanation": LabelExplanationOutput,
 }

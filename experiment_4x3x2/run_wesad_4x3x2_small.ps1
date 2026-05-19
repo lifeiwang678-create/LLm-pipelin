@@ -43,7 +43,7 @@ foreach ($inputName in $inputs) {
                     "--train-subjects", "S2",
                     "--test-subjects", "S3",
                     "--few-shot-n-per-class", "1",
-                    "--few-shot-example-max-chars", "1200"
+                    "--few-shot-example-max-chars", "800"
                 )
             }
             else {

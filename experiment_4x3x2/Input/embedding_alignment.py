@@ -179,25 +179,52 @@ class EmbeddingAlignmentInput:
         custom_metadata: dict[str, ChannelMetadata | dict] | None,
     ) -> dict[str, ChannelMetadata]:
         normalized = self._normalize_dataset_name(dataset)
-        if normalized != "WESAD":
-            raise ValueError(f"Unsupported dataset for encoded time-series input: {dataset}")
-
-        metadata = {
-            "chest_acc_x": ChannelMetadata("ACC_X", "accelerometer", "chest", 700.0, 0),
-            "chest_acc_y": ChannelMetadata("ACC_Y", "accelerometer", "chest", 700.0, 1),
-            "chest_acc_z": ChannelMetadata("ACC_Z", "accelerometer", "chest", 700.0, 2),
-            "chest_eda": ChannelMetadata("EDA", "electrodermal activity", "chest", 700.0),
-            "chest_temp": ChannelMetadata("TEMP", "temperature", "chest", 700.0),
-            "chest_ecg": ChannelMetadata("ECG", "electrocardiography", "chest", 700.0),
-            "chest_emg": ChannelMetadata("EMG", "electromyography", "chest", 700.0),
-            "chest_resp": ChannelMetadata("RESP", "respiration", "chest", 700.0),
-            "wrist_acc_x": ChannelMetadata("ACC_X", "accelerometer", "wrist", 32.0, 0),
-            "wrist_acc_y": ChannelMetadata("ACC_Y", "accelerometer", "wrist", 32.0, 1),
-            "wrist_acc_z": ChannelMetadata("ACC_Z", "accelerometer", "wrist", 32.0, 2),
-            "wrist_eda": ChannelMetadata("EDA", "electrodermal activity", "wrist", 4.0),
-            "wrist_temp": ChannelMetadata("TEMP", "temperature", "wrist", 4.0),
-            "wrist_bvp": ChannelMetadata("BVP", "blood volume pulse", "wrist", 64.0),
-        }
+        if normalized == "WESAD":
+            metadata = {
+                "chest_acc_x": ChannelMetadata("ACC_X", "accelerometer", "chest", 700.0, 0),
+                "chest_acc_y": ChannelMetadata("ACC_Y", "accelerometer", "chest", 700.0, 1),
+                "chest_acc_z": ChannelMetadata("ACC_Z", "accelerometer", "chest", 700.0, 2),
+                "chest_eda": ChannelMetadata("EDA", "electrodermal activity", "chest", 700.0),
+                "chest_temp": ChannelMetadata("TEMP", "temperature", "chest", 700.0),
+                "chest_ecg": ChannelMetadata("ECG", "electrocardiography", "chest", 700.0),
+                "chest_emg": ChannelMetadata("EMG", "electromyography", "chest", 700.0),
+                "chest_resp": ChannelMetadata("RESP", "respiration", "chest", 700.0),
+                "wrist_acc_x": ChannelMetadata("ACC_X", "accelerometer", "wrist", 32.0, 0),
+                "wrist_acc_y": ChannelMetadata("ACC_Y", "accelerometer", "wrist", 32.0, 1),
+                "wrist_acc_z": ChannelMetadata("ACC_Z", "accelerometer", "wrist", 32.0, 2),
+                "wrist_eda": ChannelMetadata("EDA", "electrodermal activity", "wrist", 4.0),
+                "wrist_temp": ChannelMetadata("TEMP", "temperature", "wrist", 4.0),
+                "wrist_bvp": ChannelMetadata("BVP", "blood volume pulse", "wrist", 64.0),
+            }
+        elif normalized == "DREAMT":
+            metadata = {
+                "acc_x": ChannelMetadata("ACC_X", "accelerometer", "wrist", 64.0, 0),
+                "acc_y": ChannelMetadata("ACC_Y", "accelerometer", "wrist", 64.0, 1),
+                "acc_z": ChannelMetadata("ACC_Z", "accelerometer", "wrist", 64.0, 2),
+                "acc": ChannelMetadata("ACC", "accelerometer", "wrist", 64.0),
+                "actigraphy": ChannelMetadata("ACTIGRAPHY", "activity magnitude", "wrist", 64.0),
+                "eda": ChannelMetadata("EDA", "electrodermal activity", "wrist", 64.0),
+                "eda_lowpass": ChannelMetadata("EDA", "low-pass electrodermal activity", "wrist", 64.0),
+                "bvp": ChannelMetadata("BVP", "blood volume pulse", "wrist", 64.0),
+                "bvp_filt": ChannelMetadata("BVP", "filtered blood volume pulse", "wrist", 64.0),
+                "ibi": ChannelMetadata("IBI", "inter-beat interval", "wrist", 64.0),
+                "hr": ChannelMetadata("HR", "heart rate", "wrist", 64.0),
+                "temp": ChannelMetadata("TEMP", "skin temperature", "wrist", 64.0),
+                "skin_temp": ChannelMetadata("TEMP", "skin temperature", "wrist", 64.0),
+            }
+        elif normalized == "HHAR":
+            metadata = {
+                "acc_x": ChannelMetadata("ACC_X", "accelerometer", "mobile device", None, 0),
+                "acc_y": ChannelMetadata("ACC_Y", "accelerometer", "mobile device", None, 1),
+                "acc_z": ChannelMetadata("ACC_Z", "accelerometer", "mobile device", None, 2),
+                "acc": ChannelMetadata("ACC", "accelerometer", "mobile device", None),
+                "acc_mag": ChannelMetadata("ACC_MAG", "acceleration magnitude", "mobile device", None),
+                "gyro_x": ChannelMetadata("GYRO_X", "gyroscope", "mobile device", None, 0),
+                "gyro_y": ChannelMetadata("GYRO_Y", "gyroscope", "mobile device", None, 1),
+                "gyro_z": ChannelMetadata("GYRO_Z", "gyroscope", "mobile device", None, 2),
+            }
+        else:
+            metadata = {}
         if custom_metadata:
             for key, value in custom_metadata.items():
                 metadata[self._normalize_key(key)] = self._coerce_metadata(value)
@@ -608,6 +635,18 @@ class EmbeddingAlignmentInput:
             return ChannelMetadata("EMG", "electromyography", location)
         if "resp" in key:
             return ChannelMetadata("RESP", "respiration", location)
+        if key in {"hr", "heart_rate"} or "heart_rate" in key:
+            return ChannelMetadata("HR", "heart rate", location)
+        if "ibi" in key:
+            return ChannelMetadata("IBI", "inter-beat interval", location)
+        if "actigraphy" in key or "activity" in key or "motion" in key:
+            return ChannelMetadata("ACTIGRAPHY", "activity magnitude", location)
+        if "gyro_x" in key:
+            return ChannelMetadata("GYRO_X", "gyroscope", location)
+        if "gyro_y" in key:
+            return ChannelMetadata("GYRO_Y", "gyroscope", location)
+        if "gyro_z" in key:
+            return ChannelMetadata("GYRO_Z", "gyroscope", location)
         if "acc_x" in key or key.endswith("_x"):
             return ChannelMetadata("ACC_X", "accelerometer", location)
         if "acc_y" in key or key.endswith("_y"):

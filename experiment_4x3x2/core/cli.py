@@ -42,13 +42,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-llm", default="qwen2.5-14b-instruct", help="LM Studio model name.")
     parser.add_argument("--api-url", default="http://127.0.0.1:1234/v1", help="LM Studio API URL.")
     parser.add_argument("--api-key", default="lm-studio", help="LM Studio API key.")
+    parser.add_argument(
+        "--data-dir",
+        help="Optional dataset directory override. For DREAMT, use the folder containing data_64Hz or data_64Hz itself.",
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        help="Optional row limit for large CSV dataset loaders such as HHAR. Use only for debugging.",
+    )
 
     parser.add_argument(
         "--labels",
         nargs="+",
         type=int,
-        default=[1, 2, 3],
-        help="Label IDs to evaluate.",
+        default=None,
+        help="Label IDs to evaluate. Defaults to the dataset registry labels.",
     )
 
     parser.add_argument("--subjects", nargs="*", help="Evaluation subjects for direct or multi_agent runs.")
@@ -70,7 +79,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Max tokens for multi_agent intermediate steps (evidence/evaluation). "
-             "Defaults to 1024 to avoid truncating structured JSON outputs.",
+             "Defaults to 512 for faster full-combination runs.",
     )
 
     parser.add_argument(

@@ -21,19 +21,21 @@ DEFAULT_LM_CLIENT_CONFIG = {
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
     "max_tokens": 128,
-    "timeout": 600,
+    "timeout": 1200,
 }
 
 
 def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
-    long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series"}
-    lm_timeout = 600 if long_input else 300
-    max_tokens = 384 if long_input else 128
+    long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series", "extra_knowledge"}
+    lm_timeout = 1200 if args.LM == "multi_agent" else 600 if long_input else 300
+    max_tokens = 256 if args.output == "label_explanation" else 128
     default_few_shot_n = 1 if long_input else 2
-    default_example_max_chars = 1500 if long_input else None
-    default_intermediate_max_tokens = 1024
+    default_example_max_chars = 800 if long_input else None
+    default_intermediate_max_tokens = 512
     loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
+    if getattr(args, "max_rows", None) is not None:
+        loader_kwargs["max_rows"] = int(args.max_rows)
 
     if args.LM == "few_shot":
         if args.subjects and not args.test_subjects:
@@ -54,7 +56,7 @@ def build_experiment_config(args: Namespace) -> dict:
 
     dataset_config = {
         "name": args.dataset,
-        "data_dir": dataset_cfg["data_dir"],
+        "data_dir": args.data_dir or dataset_cfg["data_dir"],
         "loader_kwargs": loader_kwargs,
     }
     input_config = {
@@ -73,7 +75,7 @@ def build_experiment_config(args: Namespace) -> dict:
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
-        "labels": args.labels,
+        "labels": args.labels if args.labels is not None else dataset_cfg.get("labels", [1, 2, 3]),
         "output_dir": "Results",
         "dataset": dataset_config,
         "data": data_cfg,
@@ -201,8 +203,23 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     records = []
     # 仅保留这些已知安全的 meta key 写进 CSV,避免新 Input/LM 模块往 meta 里塞嵌套结构
     # 后悄悄把 CSV 列结构搞乱。新增 meta 字段需要显式登记到这里。
-    sample_meta_safe_keys = {"input_type", "input_canonical_type", "data_path", "qa_path",
-                             "data_index", "source", "local_index", "start_index", "end_index"}
+    sample_meta_safe_keys = {
+        "input_type",
+        "input_canonical_type",
+        "data_path",
+        "qa_path",
+        "data_index",
+        "source",
+        "local_index",
+        "start_index",
+        "end_index",
+        "sample_id",
+        "true_label",
+        "original_label",
+        "original_state",
+        "activity_label",
+        "original_activity_id",
+    }
     for idx, sample in enumerate(eval_samples, 1):
         usage_start = len(getattr(client, "usage_records", []))
         if hasattr(lm_usage, "run_agent_pipeline"):
@@ -233,13 +250,19 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         flat_meta = {k: v for k, v in sample.meta.items() if k in sample_meta_safe_keys}
         records.append(
             {
+                "sample_id": sample.meta.get("sample_id", idx),
                 "subject": sample.subject,
+                "true_label": sample.label,
+                "predicted_label": int(parsed["label"]) if valid else "",
                 "y_true": sample.label,
                 "y_pred": int(parsed["label"]) if valid else "",
                 "valid": valid,
                 "parse_error": parsed.get("parse_error", ""),
                 "explanation": parsed.get("explanation", ""),
                 "raw_response": raw_response,
+                "input_type": sample.meta.get("input_type", input_provider.name),
+                "lm_type": usage_type,
+                "output_type": config["output"].get("type", "label_only"),
                 **llm_usage,
                 **flat_meta,
             }
@@ -354,18 +377,21 @@ def _token_cost(tokens: int | float | None, cost_per_1m_tokens: float) -> float 
 
 def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     normalized = dict(config)
-    normalized["labels"] = [int(label) for label in normalized.get("labels", [1, 2])]
 
     raw_dataset_config = normalized.get("dataset")
     dataset_config = _resolve_dataset_config(normalized, dataset_name)
     normalized["dataset"] = dataset_config
+    dataset_defaults = get_dataset_config(dataset_config["name"])
+    normalized["labels"] = [
+        int(label)
+        for label in normalized.get("labels", dataset_defaults.get("labels", [1, 2, 3]))
+    ]
 
     input_config = dict(normalized.get("input") or {})
     input_config.setdefault("type", "feature_description")
     input_config.setdefault("dataset", dataset_config["name"])
     normalized["input"] = input_config
 
-    dataset_defaults = get_dataset_config(dataset_config["name"])
     data_config = dict(normalized.get("data") or {})
     if not any(key in data_config for key in ("subjects", "train_subjects", "test_subjects")):
         data_config["subjects"] = dataset_defaults.get("subjects")

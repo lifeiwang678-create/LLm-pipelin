@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 
@@ -120,6 +121,8 @@ def summarize_and_save(
         "confusion_matrix_all_samples_invalid_as_wrong": all_sample_metrics["confusion_matrix"],
         "confusion_matrix_labels": labels,
         "confusion_matrix_label_names": [label_names.get(label, str(label)) for label in labels],
+        "true_label_distribution": _series_distribution(df.get("y_true")),
+        "predicted_label_distribution_valid_only": _series_distribution(valid_df.get("y_pred")),
         "classification_report": report,
         "classification_report_valid_only": report,
         "n_samples": len(records),
@@ -160,6 +163,18 @@ def _all_sample_metrics_invalid_as_wrong(df: pd.DataFrame, labels: list[int]) ->
         "macro_f1": f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0),
         "weighted_f1": f1_score(y_true, y_pred, labels=labels, average="weighted", zero_division=0),
         "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
+    }
+
+
+def _series_distribution(series) -> dict[int, int]:
+    if series is None:
+        return {}
+    values = pd.Series(series).replace("", np.nan).dropna()
+    if values.empty:
+        return {}
+    return {
+        int(label): int(count)
+        for label, count in values.astype(int).value_counts().sort_index().items()
     }
 
 

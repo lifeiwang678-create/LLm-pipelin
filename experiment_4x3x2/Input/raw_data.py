@@ -17,6 +17,8 @@ RAW_TARGET_LENGTHS = {
     "wrist_temp": 20,
 }
 
+GENERIC_TARGET_LENGTH = 48
+
 
 def format_raw_block(signals: dict) -> str:
     """Backward-compatible WESAD raw-data formatter."""
@@ -46,22 +48,59 @@ wrist_temp = {raw["wrist_temp"]}
 wrist_acc = {json.dumps(raw["wrist_acc"], ensure_ascii=False)}"""
 
 
+def format_generic_raw_block(signals: dict, max_channels: int = 12) -> str:
+    lines = ["Input raw sequences:"]
+    used = 0
+    for name in sorted(signals):
+        if used >= max_channels:
+            lines.append(f"... {len(signals) - used} additional channel(s) omitted for prompt length.")
+            break
+        value = signals.get(name, [])
+        if _looks_like_acc_matrix(value):
+            packed = pack_acc_xyz(value, GENERIC_TARGET_LENGTH)
+            if packed:
+                lines.append(f"{name} = {json.dumps(packed, ensure_ascii=False)}")
+                used += 1
+            continue
+        packed = pack_1d(value, GENERIC_TARGET_LENGTH)
+        if packed:
+            lines.append(f"{name} = {packed}")
+            used += 1
+    if used == 0:
+        lines.append("No numeric raw sensor channel was available.")
+    return "\n".join(lines)
+
+
+def _looks_like_acc_matrix(value) -> bool:
+    try:
+        rows = list(value)
+    except TypeError:
+        return False
+    if not rows:
+        return False
+    first = rows[0]
+    try:
+        return len(first) >= 3
+    except TypeError:
+        return False
+
+
 class RawDataInput:
     name = "raw_data"
 
     def transform(self, sample: SensorSample) -> LLMSample:
-        if str(sample.dataset).upper() != "WESAD":
-            raise ValueError(
-                "RawDataInput is currently WESAD-specific. "
-                "HHAR and DREAMT require dataset-aware raw signal formatting before raw_data can be used."
-            )
         meta = dict(sample.meta)
         meta["input_type"] = self.name
+        input_text = (
+            format_wesad_raw_block(sample.signals)
+            if str(sample.dataset).upper() == "WESAD"
+            else format_generic_raw_block(sample.signals)
+        )
         return LLMSample(
             dataset=sample.dataset,
             subject=sample.subject,
             label=sample.label,
-            input_text=format_wesad_raw_block(sample.signals),
+            input_text=input_text,
             meta=meta,
         )
 
@@ -69,4 +108,4 @@ class RawDataInput:
         return [self.transform(sample) for sample in samples]
 
 
-__all__ = ["RawDataInput", "format_raw_block", "format_wesad_raw_block"]
+__all__ = ["RawDataInput", "format_raw_block", "format_wesad_raw_block", "format_generic_raw_block"]
