@@ -15,6 +15,30 @@ from core.schema import SensorSample
 warnings.filterwarnings("ignore")
 
 
+# ===== 修改: 新增 DREAMT timestamp 单位推断 helper, 修复"时间戳一律按秒处理"的隐患 =====
+# 旧实现 _prepare_dataframe 直接对 timestamp 列做 floor(t / window_seconds), 假定 t
+# 一定是秒。如果 DREAMT csv 用毫秒 / 纳秒 / 采样点索引, 会得到完全错误的 epoch 划分且不报错。
+# 这里参考 HHAR loader 中的同名函数, 用相邻样本时间差的中位数推断单位。
+def _infer_time_unit_and_convert_to_seconds(time_values: np.ndarray) -> np.ndarray:
+    t = np.asarray(time_values, dtype=np.float64)
+    valid_t = np.sort(t[~np.isnan(t)])
+    if len(valid_t) < 2:
+        return t
+    diffs = np.diff(valid_t)
+    diffs = diffs[diffs > 0]
+    if len(diffs) == 0:
+        return t
+    median_diff = float(np.median(diffs))
+    if median_diff > 1e6:
+        # 中位数差 > 1e6 视为纳秒 (典型 64Hz 数据相邻样本约 1.5e7 ns)
+        return t / 1e9
+    if median_diff > 1.0:
+        # 1 ~ 1e6 视为毫秒 (典型 64Hz 数据相邻样本约 15.6 ms)
+        return t / 1e3
+    # 否则视为秒 (典型 64Hz 数据相邻样本约 0.0156 s)
+    return t
+
+
 def norm_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
 
@@ -227,51 +251,69 @@ class DREAMTLoader:
         print(f"DREAMT label distribution after binary mapping ({subject}): {mapped_distribution}")
         samples: list[SensorSample] = []
 
-        for epoch_id, group in df.groupby("epoch_id", sort=True):
-            if pd.isna(epoch_id) or len(group) < self.min_samples:
-                continue
+        # ===== 修改: 旧实现按 floor(timestamp / window_seconds) 做非重叠 epoch,
+        # stride_seconds / stride_size 配置形同虚设, 任何 overlap 设置都被静默忽略。
+        # 改为按 time_sec 做真正的滑窗扫描, 让 stride 真实生效, 同时复用 _prepare_dataframe
+        # 里推断好的 time_sec (已减去最小值, 从 0 开始)。 =====
+        df = df.sort_values("time_sec").reset_index(drop=True)
+        if df.empty:
+            return samples
 
-            label = mode_label(group["label_mapped"])
-            if pd.isna(label):
-                continue
-            label = int(label)
-            if label not in labels_to_keep:
-                continue
-
-            artifact = self._artifact_flag(group)
-            if self.skip_artifact_epochs and artifact:
-                continue
-
-            signals = self._signals_from_epoch(group)
-            if not signals:
-                continue
-
-            window_start = float(int(epoch_id) * self.window_size / self.sampling_rate)
-            window_end = float(window_start + self.window_size / self.sampling_rate)
-            sample_id = f"DREAMT_{subject}_{int(epoch_id)}"
-            samples.append(
-                SensorSample(
-                    dataset=self.name,
-                    subject=subject,
-                    label=label,
-                    signals=signals,
-                    meta={
-                        "sample_id": sample_id,
-                        "true_label": int(label),
-                        "source_file": str(file_path),
-                        "epoch_id": int(epoch_id),
-                        "window_start": window_start,
-                        "window_end": window_end,
-                        "window_start_sec": window_start,
-                        "window_end_sec": window_end,
-                        "sampling_rate": self.sampling_rate,
-                        "window_size": self.window_size,
-                        "stride_size": self.stride_size,
-                        "n_samples": int(len(group)),
-                        "artifact_epoch": int(artifact),
-                    },
-                )
+        window_sec = float(self.window_size) / float(self.sampling_rate)
+        stride_sec = float(self.stride_size) / float(self.sampling_rate)
+        if stride_sec <= 0:
+            raise ValueError(
+                f"DREAMT stride_size={self.stride_size} 与 sampling_rate={self.sampling_rate} "
+                "推出的 stride_sec 非正, 请检查 loader_kwargs。"
             )
+
+        start_time = float(df["time_sec"].iloc[0])
+        end_time = float(df["time_sec"].iloc[-1])
+
+        epoch_index = 0
+        current_start = start_time
+        # 加一个极小 epsilon 防止浮点截断把最后一个完整窗丢掉
+        while current_start + window_sec <= end_time + 1e-9:
+            current_end = current_start + window_sec
+            group = df.loc[
+                (df["time_sec"] >= current_start) & (df["time_sec"] < current_end)
+            ]
+            if len(group) >= self.min_samples:
+                label = mode_label(group["label_mapped"])
+                if not pd.isna(label):
+                    label = int(label)
+                    if label in labels_to_keep:
+                        artifact = self._artifact_flag(group)
+                        if not (self.skip_artifact_epochs and artifact):
+                            signals = self._signals_from_epoch(group)
+                            if signals:
+                                sample_id = f"DREAMT_{subject}_{int(epoch_index)}"
+                                samples.append(
+                                    SensorSample(
+                                        dataset=self.name,
+                                        subject=subject,
+                                        label=label,
+                                        signals=signals,
+                                        meta={
+                                            "sample_id": sample_id,
+                                            "true_label": int(label),
+                                            "source_file": str(file_path),
+                                            # epoch_id 现在是滑窗计数, 不再是 floor(t / 30)
+                                            "epoch_id": int(epoch_index),
+                                            "window_start": float(current_start),
+                                            "window_end": float(current_end),
+                                            "window_start_sec": float(current_start),
+                                            "window_end_sec": float(current_end),
+                                            "sampling_rate": self.sampling_rate,
+                                            "window_size": self.window_size,
+                                            "stride_size": self.stride_size,
+                                            "n_samples": int(len(group)),
+                                            "artifact_epoch": int(artifact),
+                                        },
+                                    )
+                                )
+            current_start += stride_sec
+            epoch_index += 1
 
         return samples
 
@@ -291,11 +333,25 @@ class DREAMTLoader:
 
     def _prepare_dataframe(self, df: pd.DataFrame, cols: dict[str, str | None]) -> pd.DataFrame:
         out = df.copy()
+        # ===== 修改: 旧实现把 timestamp 强行当秒处理, 并用 floor 算 epoch_id,
+        # 这里改为先用 _infer_time_unit_and_convert_to_seconds 推断单位 (s / ms / ns),
+        # 再生成 time_sec (减去最小值, 从 0 开始) 给上层滑窗使用。
+        # epoch_id 不再在这里生成, 由 _load_subject_file 的滑窗计数赋值。 =====
         if cols["timestamp"] is not None:
-            timestamp = safe_numeric(out[cols["timestamp"]])
-            out["epoch_id"] = np.floor(timestamp / float(self.window_size / self.sampling_rate)).astype("Int64")
+            raw_t = safe_numeric(out[cols["timestamp"]]).to_numpy(dtype=float)
+            time_sec_raw = _infer_time_unit_and_convert_to_seconds(raw_t)
+            finite_mask = np.isfinite(time_sec_raw)
+            baseline = (
+                float(np.nanmin(time_sec_raw[finite_mask])) if finite_mask.any() else 0.0
+            )
+            out["time_sec"] = time_sec_raw - baseline
         else:
-            out["epoch_id"] = np.arange(len(out)) // self.window_size
+            # 没有 timestamp 列时, 用行号 / sampling_rate 当兜底, 同时打印 warning 提醒数据异常
+            print(
+                "[DREAMT] timestamp column not found, falling back to row_index / sampling_rate. "
+                "Window timing may be inaccurate if sampling is not uniform."
+            )
+            out["time_sec"] = np.arange(len(out), dtype=float) / float(self.sampling_rate)
 
         for key, column in cols.items():
             if key in {"timestamp", "label"} or column is None:
@@ -334,6 +390,11 @@ class DREAMTLoader:
         return self.label_map.get(key, np.nan)
 
     def _signals_from_epoch(self, group: pd.DataFrame) -> dict[str, np.ndarray]:
+        # ===== 修改 (Fix 5): 旧实现同时把 1D acc_x/y/z(以及 acc_x_filt/y_filt/z_filt)
+        # 和 2D acc 一起塞进 signals, 导致 Input/raw_data.py 与
+        # Input/embedding_alignment.py 在 DREAMT 上把 ACC 三轴各打印两次。
+        # 这里只输出 2D "acc" + 1D "actigraphy" 作为运动通道, 与 HHAR 风格一致。
+        # 下游 feature_description 仍能从 2D acc 自动派生 x/y/z/magnitude 特征。 =====
         signal_names = [
             "bvp",
             "bvp_filt",
@@ -343,23 +404,42 @@ class DREAMTLoader:
             "hr",
             "skin_temp",
             "temp",
-            "acc_x",
-            "acc_y",
-            "acc_z",
-            "acc_x_filt",
-            "acc_y_filt",
-            "acc_z_filt",
             "actigraphy",
         ]
-        signals = {}
+        signals: dict[str, np.ndarray] = {}
         for name in signal_names:
             if name not in group:
                 continue
-            values = pd.to_numeric(group[name], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+            values = (
+                pd.to_numeric(group[name], errors="coerce")
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
             if not values.empty:
                 signals[name] = values.to_numpy(dtype=float)
-        if all(axis in signals for axis in ["acc_x", "acc_y", "acc_z"]):
-            signals["acc"] = np.column_stack([signals["acc_x"], signals["acc_y"], signals["acc_z"]])
+
+        # ===== 修改 (Fix 2): 旧实现对 acc_x/y/z 各自单独 dropna 后直接
+        # np.column_stack, 三轴长度不等时会抛 ValueError 让整个 run 崩。
+        # 这里改为只在三个轴 dropna 之后长度对齐时才拼 2D acc, 长度不齐则
+        # 放弃拼接 (上游 actigraphy 仍可用), 避免运行时崩溃。 =====
+        acc_axes: dict[str, np.ndarray] = {}
+        for axis in ("acc_x", "acc_y", "acc_z"):
+            if axis not in group:
+                continue
+            vals = (
+                pd.to_numeric(group[axis], errors="coerce")
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
+            if not vals.empty:
+                acc_axes[axis] = vals.to_numpy(dtype=float)
+        if len(acc_axes) == 3:
+            lengths = {len(values) for values in acc_axes.values()}
+            if len(lengths) == 1:
+                signals["acc"] = np.column_stack(
+                    [acc_axes["acc_x"], acc_axes["acc_y"], acc_axes["acc_z"]]
+                )
+            # else: 三轴长度不一致, 不强行拼接 2D acc, 避免 column_stack 抛错。
         return signals
 
     def _artifact_flag(self, group: pd.DataFrame) -> bool:

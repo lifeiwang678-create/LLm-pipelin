@@ -10,7 +10,11 @@ DATASET_REGISTRY = {
         "loader": WESADLoader,
         "data_dir": "..",
         "labels": [0, 1],
-        "subjects": ["S2", "S3"],
+        # ===== 修改: 默认改为 None, 让 WESADLoader 自动发现所有 ../S*/S*.pkl =====
+        # 旧默认值 ["S2", "S3"] 会让 "python main.py -dataset WESAD ..." 在没指定
+        # --subjects 时只加载 2 个 subject, 容易被误以为是"全量 WESAD"路径。
+        # 若需要小子集 debug, 请显式 --subjects S2 S3 等。
+        "subjects": None,
         "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
         "test_subjects": ["S7", "S8"],
         "loader_kwargs": {

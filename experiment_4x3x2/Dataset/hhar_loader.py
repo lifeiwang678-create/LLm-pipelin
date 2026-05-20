@@ -342,10 +342,12 @@ class HHARLoader:
         y = window_df["y"].to_numpy(dtype=float)
         z = window_df["z"].to_numpy(dtype=float)
         acc_mag = np.sqrt(x**2 + y**2 + z**2)
+        # ===== 修改: 只保留 2D "acc" + 1D "acc_mag", 不再同时存 1D acc_x/y/z =====
+        # 旧实现把同一三轴信号塞了两份 (2D acc 和 3 个 1D 轴), 导致 Input/raw_data.py
+        # 与 Input/embedding_alignment.py 在 HHAR 上把 ACC 三轴各打印两次, 既拉长 prompt
+        # 又让 LLM 看到重复"通道"。下游 feature_description 仍能从 2D acc 自动派生出
+        # x / y / z / magnitude 特征, 不受影响。
         signals = {
-            "acc_x": x,
-            "acc_y": y,
-            "acc_z": z,
             "acc": np.column_stack([x, y, z]),
             "acc_mag": acc_mag,
         }
@@ -355,11 +357,9 @@ class HHARLoader:
             gx = gyro_window["x"].to_numpy(dtype=float)
             gy = gyro_window["y"].to_numpy(dtype=float)
             gz = gyro_window["z"].to_numpy(dtype=float)
+            # ===== 修改: 陀螺仪同样只保留 2D "gyro" + 1D "gyro_mag", 去掉 1D gyro_x/y/z =====
             signals.update(
                 {
-                    "gyro_x": gx,
-                    "gyro_y": gy,
-                    "gyro_z": gz,
                     "gyro": np.column_stack([gx, gy, gz]),
                     "gyro_mag": np.sqrt(gx**2 + gy**2 + gz**2),
                 }

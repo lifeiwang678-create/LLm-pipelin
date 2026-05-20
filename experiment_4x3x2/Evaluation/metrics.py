@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -21,16 +22,24 @@ def limit_samples(
     limit: int | None = None,
     per_subject_limit: int | None = None,
     balanced_per_label: int | None = None,
+    # ===== 修改: 新增 random_state 参数,用于平衡采样时的可复现随机洗牌 =====
+    random_state: int | None = 42,
 ) -> list[Sample]:
     if balanced_per_label is not None:
-        counts: dict[int, int] = {}
-        balanced = []
+        # ===== 修改: 旧实现按 loader 输出顺序取每个 label 的前 N 个样本,
+        # 由于 loader 是按 subject / 时间窗顺序产出,会让 debug 子集偏向
+        # 录音早期的窗口(WESAD 永远是早期 baseline + 早期 stress)。
+        # 改为按 label 分组后用固定种子随机洗牌再截前 N 个,既避免选择偏差,
+        # 又通过 random_state 保证可复现。 =====
+        rng = random.Random(random_state if random_state is not None else 42)
+        groups: dict[int, list] = {}
         for sample in samples:
-            count = counts.get(sample.label, 0)
-            if count >= balanced_per_label:
-                continue
-            balanced.append(sample)
-            counts[sample.label] = count + 1
+            groups.setdefault(sample.label, []).append(sample)
+        balanced: list = []
+        for label in sorted(groups):
+            label_samples = list(groups[label])
+            rng.shuffle(label_samples)
+            balanced.extend(label_samples[:balanced_per_label])
         samples = balanced
 
     if per_subject_limit is not None:

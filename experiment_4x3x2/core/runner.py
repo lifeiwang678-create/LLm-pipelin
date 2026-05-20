@@ -154,6 +154,10 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         limit=eval_cfg.get("sample_limit"),
         per_subject_limit=eval_cfg.get("per_subject_limit"),
         balanced_per_label=eval_cfg.get("balanced_per_label"),
+        # ===== 修改 (Fix 1): 把平衡采样的随机种子串下去, 默认 42 保证可复现。
+        # 旧实现 balanced_per_label 直接顺序取前 N 个样本, 会让 debug 子集偏向
+        # 录音早期, 跨实验对比会沾上这种顺序偏差。 =====
+        random_state=eval_cfg.get("random_state", 42),
     )
     sampled_distribution = label_distribution(eval_sensor_samples)
     print(f"Label distribution after sampling: {sampled_distribution}")
