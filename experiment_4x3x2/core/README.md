@@ -17,7 +17,7 @@ python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 
 By default, `main.py` does not sample or balance the evaluation set. Add `--balanced-per-label` only for debug runs.
 For WESAD, the configured default subjects are currently `S2` and `S3`; pass `--subjects` to evaluate a different subject set.
-`raw_data` is currently WESAD-specific and will fail clearly for HHAR/DREAMT until dataset-aware raw formatting is added.
+`raw_data` uses a WESAD-specific formatter for WESAD and a generic numeric-channel formatter for HHAR/DREAMT.
 
 Install dependencies from the repository root before running experiments:
 
@@ -49,19 +49,20 @@ Change combinations by editing the config:
 }
 ```
 
-For 3-class experiments, change `labels` to `[1, 2, 3]`.
+All maintained experiments are binary and use `labels: [0, 1]`.
 
 Label names are selected by dataset:
 
-| Dataset | Label 1 | Label 2 | Label 3 |
-| -- | -- | -- | -- |
-| `WESAD` | Baseline | Stress | Amusement |
-| `HHAR` | Static activity | Dynamic activity | Stairs activity |
-| `DREAMT` | Baseline/Neutral/Relax | Stress | Amusement/Happy |
+| Dataset | Label 0 | Label 1 |
+| -- | -- | -- |
+| `WESAD` | no stress | stress |
+| `HHAR` | walking downstairs | walking upstairs |
+| `DREAMT` | wake | sleep |
 
 These names are used in LM prompts and in `classification_report`; predictions still use numeric label IDs.
 
-`embedding_alignment` / `encoded_time_series` is a SensorLLM-inspired prompt-compatible input.
+`encoded_time_series` is the official SensorLLM-inspired prompt-compatible input.
+`embedding_alignment` is accepted only as a backward-compatible alias.
 It describes channel-aware temporal patterns in text and stays inside the official prompt-compatible 4 x 3 x 2 framework.
 It does not train projectors, modify LLM embeddings, or replace time-series token embeddings.
 `extra_knowledge` is implemented in the official `Input/extra_knowledge.py` module.

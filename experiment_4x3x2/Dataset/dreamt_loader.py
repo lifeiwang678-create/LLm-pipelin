@@ -138,6 +138,9 @@ class DREAMTLoader:
             "w": 0,
             "awake": 0,
             "wakefulness": 0,
+            "p": 0,
+            "prep": 0,
+            "preparation": 0,
             "sleep": 1,
             "r": 1,
             "rem": 1,
@@ -210,7 +213,18 @@ class DREAMTLoader:
         if cols["label"] is None:
             raise ValueError(f"Cannot find DREAMT sleep-stage label column in {file_path.name}.")
 
+        raw_distribution = df[cols["label"]].value_counts(dropna=False).to_dict()
         df = self._prepare_dataframe(df, cols)
+        mapped_distribution = (
+            df["label_mapped"]
+            .dropna()
+            .astype(int)
+            .value_counts()
+            .sort_index()
+            .to_dict()
+        )
+        print(f"DREAMT label distribution before binary mapping ({subject}): {raw_distribution}")
+        print(f"DREAMT label distribution after binary mapping ({subject}): {mapped_distribution}")
         samples: list[SensorSample] = []
 
         for epoch_id, group in df.groupby("epoch_id", sort=True):
@@ -232,6 +246,9 @@ class DREAMTLoader:
             if not signals:
                 continue
 
+            window_start = float(int(epoch_id) * self.window_size / self.sampling_rate)
+            window_end = float(window_start + self.window_size / self.sampling_rate)
+            sample_id = f"DREAMT_{subject}_{int(epoch_id)}"
             samples.append(
                 SensorSample(
                     dataset=self.name,
@@ -239,8 +256,14 @@ class DREAMTLoader:
                     label=label,
                     signals=signals,
                     meta={
+                        "sample_id": sample_id,
+                        "true_label": int(label),
                         "source_file": str(file_path),
                         "epoch_id": int(epoch_id),
+                        "window_start": window_start,
+                        "window_end": window_end,
+                        "window_start_sec": window_start,
+                        "window_end_sec": window_end,
                         "sampling_rate": self.sampling_rate,
                         "window_size": self.window_size,
                         "stride_size": self.stride_size,

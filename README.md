@@ -16,7 +16,7 @@ python main.py -h
 `experiment_4x3x2/` contains the maintained binary-classification 4 x 3 x 2 modular pipeline:
 
 - Datasets: `WESAD`, `HHAR`, `DREAMT`
-- Inputs: `raw_data`, `feature_description`, `embedding_alignment`, `extra_knowledge`
+- Inputs: `raw_data`, `feature_description`, `encoded_time_series`, `extra_knowledge`
 - LM usage: `direct`, `few_shot`, `multi_agent`
 - Outputs: `label_only`, `label_explanation`
 
@@ -35,5 +35,7 @@ The complete study has 72 combinations:
 ```
 
 `legacy/` is for reference-only scripts from older experiment paths. Do not use it as the current experiment entry.
+
+`embedding_alignment` remains accepted inside the code only as a backward-compatible alias for `encoded_time_series`.
 
 Local raw data, generated results, model checkpoints, and historical output folders are intentionally not uploaded to GitHub.

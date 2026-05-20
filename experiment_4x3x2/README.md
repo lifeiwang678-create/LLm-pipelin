@@ -27,10 +27,11 @@ Input representations:
 
 - `raw_data`
 - `feature_description`
-- `embedding_alignment`
+- `encoded_time_series`
 - `extra_knowledge`
 
-`encoded_time_series` is accepted as an alias for `embedding_alignment`.
+`embedding_alignment` is accepted as a backward-compatible alias for `encoded_time_series`.
+The implementation is a SensorLLM-inspired textual representation, not true embedding-level alignment.
 
 LM usage:
 
@@ -214,12 +215,13 @@ Large local datasets are intentionally not tracked in Git.
   - HHAR motion features
   - DREAMT sleep/wearable features
 
-`embedding_alignment` / `encoded_time_series`
+`encoded_time_series`
 
 - SensorLLM-inspired textual encoded time-series input.
 - Channel-aware and segment-level temporal descriptions.
 - Prompt-compatible only.
 - It does not train projectors, modify LLM embeddings, run Chronos, or replace time-series token embeddings.
+- `embedding_alignment` is still accepted as a backward-compatible alias.
 
 `extra_knowledge`
 

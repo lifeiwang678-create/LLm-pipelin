@@ -1,6 +1,6 @@
 ﻿{
   "run_name": "wesad_feature_multiagent_label_explanation",
-  "labels": [1, 2],
+  "labels": [0, 1],
   "output_dir": "outputs_modular",
   "data": {
     "subjects": ["S2", "S3"]

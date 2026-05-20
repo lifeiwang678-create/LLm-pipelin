@@ -1,6 +1,6 @@
 ﻿{
   "run_name": "E1_raw_direct_label_only",
-  "labels": [1, 2],
+  "labels": [0, 1],
   "output_dir": "outputs_modular",
   "data": {
     "subjects": ["S2", "S3"]

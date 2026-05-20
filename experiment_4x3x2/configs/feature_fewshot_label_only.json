@@ -1,6 +1,6 @@
 ﻿{
   "run_name": "wesad_feature_fewshot_label_only",
-  "labels": [1, 2],
+  "labels": [0, 1],
   "output_dir": "outputs_modular",
   "data": {
     "train_subjects": ["S2", "S3", "S4", "S5", "S6"],

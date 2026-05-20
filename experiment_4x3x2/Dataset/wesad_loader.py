@@ -15,6 +15,7 @@ WESAD_BINARY_LABEL_MAP = {
     2: 1,  # stress -> stress
     3: 0,  # amusement -> no stress
     4: 0,  # meditation -> no stress
+    5: 0,  # recovery-like non-stress segment in local processed labels
     6: 0,  # recovery-like non-stress segment in local processed labels
     7: 0,  # recovery-like non-stress segment in local processed labels
 }
@@ -25,6 +26,7 @@ WESAD_ORIGINAL_STATE_NAMES = {
     2: "stress",
     3: "amusement",
     4: "meditation",
+    5: "recovery",
     6: "recovery",
     7: "recovery",
 }
@@ -228,6 +230,10 @@ class WESADLoader:
                             "true_label": int(label_value),
                             "original_label": original_label,
                             "original_state": WESAD_ORIGINAL_STATE_NAMES.get(original_label, str(original_label)),
+                            "window_start": round(float(time_sec - self.physiology_window_sec / 2.0), 3),
+                            "window_end": round(float(time_sec + self.physiology_window_sec / 2.0), 3),
+                            "window_start_sec": round(float(time_sec - self.physiology_window_sec / 2.0), 3),
+                            "window_end_sec": round(float(time_sec + self.physiology_window_sec / 2.0), 3),
                             "time_sec": round(float(time_sec), 3),
                             "center_index": int(center_idx),
                             "source": str(pkl_path),

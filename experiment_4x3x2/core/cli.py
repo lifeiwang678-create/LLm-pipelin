@@ -56,8 +56,8 @@ def parse_args() -> argparse.Namespace:
         "--labels",
         nargs="+",
         type=int,
-        default=None,
-        help="Label IDs to evaluate. Defaults to the dataset registry labels.",
+        default=[0, 1],
+        help="Label IDs to evaluate. Defaults to the maintained binary labels: 0 1.",
     )
 
     parser.add_argument("--subjects", nargs="*", help="Evaluation subjects for direct or multi_agent runs.")

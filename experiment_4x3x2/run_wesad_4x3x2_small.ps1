@@ -33,7 +33,7 @@ foreach ($inputName in $inputs) {
                 "-Input", $inputName,
                 "-LM", $lmName,
                 "-output", $outputName,
-                "--labels", "1", "2", "3",
+                "--labels", "0", "1",
                 "--balanced-per-label", "1",
                 "--log-every", "1"
             )

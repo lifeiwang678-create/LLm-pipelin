@@ -75,7 +75,7 @@ def build_experiment_config(args: Namespace) -> dict:
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
-        "labels": args.labels if args.labels is not None else dataset_cfg.get("labels", [1, 2, 3]),
+        "labels": args.labels if args.labels is not None else dataset_cfg.get("labels", [0, 1]),
         "output_dir": "Results",
         "dataset": dataset_config,
         "data": data_cfg,
@@ -219,6 +219,11 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         "original_state",
         "activity_label",
         "original_activity_id",
+        "window_start",
+        "window_end",
+        "window_start_sec",
+        "window_end_sec",
+        "epoch_id",
     }
     for idx, sample in enumerate(eval_samples, 1):
         usage_start = len(getattr(client, "usage_records", []))
@@ -251,7 +256,10 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         records.append(
             {
                 "sample_id": sample.meta.get("sample_id", idx),
+                "dataset": sample.dataset,
                 "subject": sample.subject,
+                "window_start": sample.meta.get("window_start", sample.meta.get("window_start_sec", "")),
+                "window_end": sample.meta.get("window_end", sample.meta.get("window_end_sec", "")),
                 "true_label": sample.label,
                 "predicted_label": int(parsed["label"]) if valid else "",
                 "y_true": sample.label,
@@ -384,7 +392,7 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     dataset_defaults = get_dataset_config(dataset_config["name"])
     normalized["labels"] = [
         int(label)
-        for label in normalized.get("labels", dataset_defaults.get("labels", [1, 2, 3]))
+        for label in normalized.get("labels", dataset_defaults.get("labels", [0, 1]))
     ]
 
     input_config = dict(normalized.get("input") or {})

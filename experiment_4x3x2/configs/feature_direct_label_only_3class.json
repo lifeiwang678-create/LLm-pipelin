@@ -1,6 +1,6 @@
 ﻿{
-  "run_name": "wesad_feature_direct_label_only_3class",
-  "labels": [1, 2, 3],
+  "run_name": "wesad_feature_direct_label_only_binary",
+  "labels": [0, 1],
   "output_dir": "outputs_modular",
   "data": {
     "subjects": ["S2", "S3"]
