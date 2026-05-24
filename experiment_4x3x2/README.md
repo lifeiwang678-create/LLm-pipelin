@@ -135,9 +135,13 @@ DREAMT sleep-stage labels are mapped as:
 |   |-- splits.py
 |
 |-- Results/
+|-- Processed/
 |-- configs/
 |-- main.py
 |-- run_experiment.py
+|-- preprocess_datasets.py
+|-- preprocess_inputs.py
+|-- count_dataset_samples.py
 |-- requirements.txt
 ```
 
@@ -178,10 +182,11 @@ Large local datasets are intentionally not tracked in Git.
 `Dataset/wesad_loader.py`
 
 - Loads WESAD `.pkl` files.
-- Uses paper-style windows:
+- Uses LLM-friendly WESAD windows:
   - physiology window: 60 seconds
   - ACC window: 5 seconds
-  - stride: 0.25 seconds
+  - stride: 60 seconds
+  - dense 0.25-second stride should only be used for traditional ML reproduction, not routine LLM API runs
 - Maps original states to binary no-stress/stress labels.
 
 `Dataset/hhar_loader.py`
@@ -280,24 +285,148 @@ Parser failures are saved as invalid predictions. They are not converted to a fa
 Small WESAD debug run:
 
 ```powershell
-python main.py -dataset WESAD -Input raw_data -LM direct -output label --subjects S2 --balanced-per-label 1 --log-every 1
+python main.py -dataset WESAD -Input raw_data -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
 Small HHAR debug run:
 
 ```powershell
-python main.py -dataset HHAR -Input raw_data -LM direct -output label --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --balanced-per-label 1 --log-every 1
+python main.py -dataset HHAR -Input raw_data -LM direct -output label_only --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --balanced-per-label 1 --log-every 1
 ```
 
 Small DREAMT debug run:
 
 ```powershell
-python main.py -dataset DREAMT -Input feature_description -LM direct -output label --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --balanced-per-label 1 --log-every 1
+python main.py -dataset DREAMT -Input feature_description -LM direct -output label_only --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --balanced-per-label 1 --log-every 1
 ```
 
 Use `--balanced-per-label` only for debug subsets. Formal full-data runs should omit it.
 
 Use `--max-rows` only for debugging large CSV datasets such as HHAR. Formal HHAR runs should omit it.
+
+## Processed Dataset Cache
+
+Use `preprocess_datasets.py` to cut windows once and save reusable binary
+`SensorSample` caches. This avoids re-reading raw files and re-cutting windows
+for every Input x LM x Output combination.
+
+Processed files are stored in `Processed/`:
+
+```text
+Processed/WESAD_binary_windows.pkl
+Processed/HHAR_binary_windows.pkl
+Processed/DREAMT_binary_windows.pkl
+```
+
+Each `.pkl` contains one dataset-level list of window samples. Each sample keeps
+its own `label`, `signals`, and metadata. Labels are for evaluation only; Input
+modules must still avoid writing true labels into prompts.
+
+For WESAD LLM experiments, avoid saving full raw-window dataset caches. Even
+subject shards can become very large because each `SensorSample` contains full
+signal arrays. Prefer the input-cache workflow below, especially
+`preprocess_inputs.py --from-raw`.
+
+Subject shards are kept only as an emergency/compatibility option:
+
+```text
+Processed/WESAD_binary_windows_manifest.json
+Processed/WESAD_binary_windows_S2.pkl
+Processed/WESAD_binary_windows_S3.pkl
+...
+```
+
+Examples:
+
+```powershell
+python preprocess_datasets.py -dataset WESAD --subjects S2 --overwrite
+python preprocess_datasets.py -dataset HHAR --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --overwrite
+python preprocess_datasets.py -dataset DREAMT --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --overwrite
+```
+
+Then run experiments from the cache:
+
+```powershell
+python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed --subjects S2 --balanced-per-label 1 --log-every 1
+```
+
+Use `--processed-dir` or `--processed-file` if the cache is stored somewhere else.
+
+## Input Cache
+
+Use `preprocess_inputs.py` to build the second cache layer. It reads
+`Processed/<DATASET>_binary_windows.pkl` or the WESAD subject-shard manifest,
+applies one Input module, and saves ready-to-use `LLMSample` objects with
+`input_text`.
+
+For full WESAD, the recommended path is to build input caches directly from raw
+subject files. This reads one subject at a time, converts windows immediately to
+text, and avoids saving very large raw-window pickle files.
+
+After changing WESAD window parameters such as `stride_sec`, delete and rebuild
+the WESAD input caches. Stale cache metadata should not show `stride_sec: 0.25`.
+
+```powershell
+Remove-Item .\Processed\WESAD_*_samples.pkl -Force
+Remove-Item .\Processed\WESAD_*_samples.json -Force
+python preprocess_inputs.py -dataset WESAD -Input feature_description --from-raw --overwrite
+python preprocess_inputs.py -dataset WESAD -Input extra_knowledge --from-raw --overwrite
+python preprocess_inputs.py -dataset WESAD -Input encoded_time_series --from-raw --overwrite
+python preprocess_inputs.py -dataset WESAD -Input raw_data --from-raw --overwrite
+```
+
+Examples:
+
+```powershell
+python preprocess_inputs.py -dataset WESAD -Input feature_description --subjects S2 --overwrite
+python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 --overwrite
+python preprocess_inputs.py -dataset WESAD -Input feature_description --overwrite
+```
+
+This creates files such as:
+
+```text
+Processed/WESAD_raw_data_samples.pkl
+Processed/WESAD_feature_description_samples.pkl
+Processed/WESAD_encoded_time_series_samples.pkl
+Processed/WESAD_extra_knowledge_samples.pkl
+```
+
+Then run experiments directly from the input cache:
+
+```powershell
+python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --train-subjects S2 --test-subjects S3 --balanced-per-label 1 --log-every 1
+```
+
+For `extra_knowledge`, the input cache depends on `knowledge_text`,
+`knowledge_file`, and `knowledge_mode`. Rebuild the cache if those values change.
+
+For dataset-size checks without saving samples or calling the LLM:
+
+```powershell
+python count_dataset_samples.py -dataset WESAD --subjects S2
+```
+
+Run commands from the `experiment_4x3x2/` directory so relative dataset paths
+such as `data_dir: ".."` resolve correctly.
+
+## 72-Combination Script
+
+Run a 72-combination debug pass from precomputed input caches:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all_3datasets_4x3x2.ps1 -UseInputCache -BalancedPerLabel 1 -LogEvery 1
+```
+
+Run without balanced debug sampling:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all_3datasets_4x3x2.ps1 -UseInputCache -FullData -LogEvery 10
+```
+
+With `-FullData`, direct and multi-agent WESAD runs do not pass a subject filter.
+Few-shot still requires explicit train/test subjects; override them with
+`-WesadFewShotTrainSubjects` and `-WesadFewShotTestSubjects` if needed.
 
 ## Few-Shot Runs
 

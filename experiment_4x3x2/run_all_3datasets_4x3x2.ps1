@@ -8,6 +8,15 @@ param(
     [int]$FewShotNPerClass = 1,
     [int]$FewShotExampleMaxChars = 800,
     [int]$MultiAgentIntermediateMaxTokens = 512,
+    [switch]$UseInputCache,
+    [string]$InputCacheDir = "Processed",
+    [string[]]$WesadDirectSubjects = @("S2", "S3"),
+    [string[]]$WesadFewShotTrainSubjects = @("S2"),
+    [string[]]$WesadFewShotTestSubjects = @("S3"),
+    [string[]]$HharFewShotTrainSubjects = @("a"),
+    [string[]]$HharFewShotTestSubjects = @("b"),
+    [string[]]$DreamtFewShotTrainSubjects = @("S099"),
+    [string[]]$DreamtFewShotTestSubjects = @("S100"),
     [string]$StartDataset = "",
     [string]$StartInput = "",
     [string]$StartLM = "",
@@ -40,25 +49,28 @@ $outputs = @(
 $datasetSettings = @{
     "WESAD" = @{
         "DataDir" = $null
-        "DirectSubjects" = @("S2", "S3")
-        "FewShotTrainSubjects" = @("S2")
-        "FewShotTestSubjects" = @("S3")
+        # In debug mode, direct/multi_agent use a small subject subset.
+        # In -FullData mode this subject filter is omitted, so WESAD uses all
+        # available cached/loaded subjects.
+        "DirectSubjects" = if ($FullData) { @() } else { $WesadDirectSubjects }
+        "FewShotTrainSubjects" = $WesadFewShotTrainSubjects
+        "FewShotTestSubjects" = $WesadFewShotTestSubjects
         "MaxRows" = $null
     }
     "HHAR" = @{
         "DataDir" = if ($HharDataDir) { $HharDataDir } else { $null }
         "DirectSubjects" = @()
         # HHAR users are often letter IDs such as a, b, c...; edit if needed.
-        "FewShotTrainSubjects" = @("a")
-        "FewShotTestSubjects" = @("b")
+        "FewShotTrainSubjects" = $HharFewShotTrainSubjects
+        "FewShotTestSubjects" = $HharFewShotTestSubjects
         "MaxRows" = $HharMaxRows
     }
     "DREAMT" = @{
         "DataDir" = if ($DreamtDataDir) { $DreamtDataDir } else { $null }
         "DirectSubjects" = @()
         # Use two different DREAMT subject files. Edit if your folder uses other IDs.
-        "FewShotTrainSubjects" = @("S099")
-        "FewShotTestSubjects" = @("S100")
+        "FewShotTrainSubjects" = $DreamtFewShotTrainSubjects
+        "FewShotTestSubjects" = $DreamtFewShotTestSubjects
         "MaxRows" = $null
     }
 }
@@ -86,6 +98,12 @@ function Add-CommonArgs {
     if (-not $FullData) {
         [void]$ArgsList.Add("--balanced-per-label")
         [void]$ArgsList.Add([string]$BalancedPerLabel)
+    }
+
+    if ($UseInputCache) {
+        [void]$ArgsList.Add("--use-input-cache")
+        [void]$ArgsList.Add("--input-cache-dir")
+        [void]$ArgsList.Add($InputCacheDir)
     }
 
     [void]$ArgsList.Add("--log-every")

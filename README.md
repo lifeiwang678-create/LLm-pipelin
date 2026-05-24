@@ -34,6 +34,20 @@ The complete study has 72 combinations:
 3 datasets x 4 input types x 3 LM usage types x 2 output formats
 ```
 
+For faster repeated experiments, the official framework supports two cache layers:
+
+- Dataset cache: `Processed/<DATASET>_binary_windows.pkl`
+- Input cache: `Processed/<DATASET>_<INPUT>_samples.pkl`
+
+Build them from inside `experiment_4x3x2/`:
+
+```powershell
+python preprocess_datasets.py -dataset WESAD --subjects S2 S3 --overwrite
+python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 S3 --overwrite
+```
+
+Then run from cache with `--use-processed` or `--use-input-cache`.
+
 `legacy/` is for reference-only scripts from older experiment paths. Do not use it as the current experiment entry.
 
 `embedding_alignment` remains accepted inside the code only as a backward-compatible alias for `encoded_time_series`.

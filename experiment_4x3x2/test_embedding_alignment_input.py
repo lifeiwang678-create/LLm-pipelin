@@ -134,7 +134,7 @@ def test_legacy_load_uses_explicit_label_not_qa_answer() -> None:
         }
         with open(qa_path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
-        samples = EmbeddingAlignmentInput(dataset="WESAD", qa_path=qa_path).load(["S2"], [1, 2])
+        samples = EmbeddingAlignmentInput(dataset="WESAD", qa_path=qa_path).load(["S2"], [0, 1])
     assert len(samples) == 1
     assert samples[0].label == 1
 
@@ -155,20 +155,27 @@ def test_legacy_load_requires_explicit_label() -> None:
         with open(qa_path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
         try:
-            EmbeddingAlignmentInput(dataset="WESAD", qa_path=qa_path).load(["S2"], [1, 2])
+            EmbeddingAlignmentInput(dataset="WESAD", qa_path=qa_path).load(["S2"], [0, 1])
         except ValueError as exc:
             assert "explicit numeric label" in str(exc)
         else:
             raise AssertionError("legacy load should reject QA items without explicit labels")
 
 
-def test_unsupported_dataset_raises() -> None:
-    try:
-        EmbeddingAlignmentInput(dataset="HHAR")
-    except ValueError as exc:
-        assert "Unsupported dataset" in str(exc)
-    else:
-        raise AssertionError("Unsupported dataset should raise ValueError")
+def test_hhar_dataset_is_supported() -> None:
+    sample = SensorSample(
+        dataset="HHAR",
+        subject="mock",
+        label=1,
+        signals={
+            "acc_x": np.linspace(0.0, 1.0, 16),
+            "acc_y": np.linspace(1.0, 0.0, 16),
+            "acc_z": np.ones(16),
+        },
+    )
+    prompt = EmbeddingAlignmentInput(dataset="HHAR").build_input(sample)
+    assert "<MOBILE_DEVICE_ACC_X_CHANNEL>" in prompt
+    assert "Sensor type: accelerometer" in prompt
 
 
 def _mock_wesad_sample() -> SensorSample:
@@ -197,7 +204,7 @@ def main() -> None:
         test_strict_raises_when_no_numeric_channels,
         test_legacy_load_uses_explicit_label_not_qa_answer,
         test_legacy_load_requires_explicit_label,
-        test_unsupported_dataset_raises,
+        test_hhar_dataset_is_supported,
     ]
     for test in tests:
         test()

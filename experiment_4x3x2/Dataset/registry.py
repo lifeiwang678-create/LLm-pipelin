@@ -20,7 +20,10 @@ DATASET_REGISTRY = {
         "loader_kwargs": {
             "physiology_window_sec": 60.0,
             "acc_window_sec": 5.0,
-            "stride_sec": 0.25,
+            # LLM-friendly WESAD default:
+            # keep the paper-style 60 s physiology / 5 s ACC windows, but avoid
+            # dense 0.25 s overlap because every window becomes an LLM request.
+            "stride_sec": 60.0,
         },
     },
     "HHAR": {

@@ -16,8 +16,18 @@ python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 ```
 
 By default, `main.py` does not sample or balance the evaluation set. Add `--balanced-per-label` only for debug runs.
-For WESAD, the configured default subjects are currently `S2` and `S3`; pass `--subjects` to evaluate a different subject set.
+For WESAD, the registry default is `subjects: None`, so the loader auto-discovers available local subject folders. Pass `--subjects` for a smaller or specific subject set.
 `raw_data` uses a WESAD-specific formatter for WESAD and a generic numeric-channel formatter for HHAR/DREAMT.
+
+The runner can skip repeated raw-data processing with two explicit cache modes:
+
+```powershell
+python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed
+python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-input-cache
+```
+
+- `--use-processed` loads `Processed/<DATASET>_binary_windows.pkl`.
+- `--use-input-cache` loads `Processed/<DATASET>_<INPUT>_samples.pkl`.
 
 Install dependencies from the repository root before running experiments:
 

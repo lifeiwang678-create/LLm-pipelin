@@ -10,7 +10,7 @@
     "data_dir": "..",
     "physiology_window_sec": 60.0,
     "acc_window_sec": 5.0,
-    "stride_sec": 0.25
+    "stride_sec": 60.0
   },
   "lm_usage": {
     "type": "direct"

@@ -20,6 +20,8 @@ Results/*
 !Results/.gitkeep
 experiment_4x3x2/Results/*
 !experiment_4x3x2/Results/.gitkeep
+experiment_4x3x2/Processed/*
+!experiment_4x3x2/Processed/.gitkeep
 
 # Local dataset packages
 Dataset/*

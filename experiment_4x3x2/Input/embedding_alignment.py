@@ -59,10 +59,14 @@ class EmbeddingAlignmentInput:
         self.data_path = Path(data_path) if data_path else None
         self.qa_path = Path(qa_path) if qa_path else None
         self.label_map = label_map or {
-            "Non-stress": 1,
-            "Stress": 2,
-            "Baseline": 1,
-            "Amusement": 3,
+            "Non-stress": 0,
+            "No stress": 0,
+            "No-stress": 0,
+            "Baseline": 0,
+            "Amusement": 0,
+            "Meditation": 0,
+            "Recovery": 0,
+            "Stress": 1,
         }
         self.channel_metadata = self._load_channel_metadata(self.dataset, channel_metadata)
         self.max_points = int(max_points)

@@ -40,12 +40,12 @@ class WESADLoader:
         data_dir: str | Path,
         physiology_window_sec: float = 60.0,
         acc_window_sec: float = 5.0,
-        stride_sec: float = 0.25,
+        stride_sec: float = 60.0,
         window_sec: float | None = None,
         label_map: dict[int, int] | None = None,
     ) -> None:
         """
-        Paper-style WESAD windowing protocol.
+        LLM-friendly WESAD windowing protocol.
 
         - Physiology window: 60 s
           ECG / EDA / EMG / RESP / TEMP / BVP
@@ -53,7 +53,11 @@ class WESADLoader:
         - ACC window: 5 s
           chest ACC / wrist ACC
 
-        - Stride: 0.25 s
+        - Stride: 60 s by default
+
+        The original dense 0.25 s stride is suitable for traditional sliding-window
+        ML, but it creates many highly overlapping LLM prompts. Use an explicit
+        config override if you need to reproduce that dense setting.
 
         - A physiology window must be fully contained in one contiguous
           label segment.

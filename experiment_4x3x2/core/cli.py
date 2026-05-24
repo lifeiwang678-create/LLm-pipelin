@@ -51,6 +51,34 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Optional row limit for large CSV dataset loaders such as HHAR. Use only for debugging.",
     )
+    parser.add_argument(
+        "--use-processed",
+        action="store_true",
+        help="Load preprocessed SensorSample windows from Processed/ instead of reprocessing raw data.",
+    )
+    parser.add_argument(
+        "--processed-dir",
+        default="Processed",
+        help="Directory containing preprocessed dataset window files.",
+    )
+    parser.add_argument(
+        "--processed-file",
+        help="Optional explicit preprocessed .pkl file for this run.",
+    )
+    parser.add_argument(
+        "--use-input-cache",
+        action="store_true",
+        help="Load precomputed LLMSample input_text from cache instead of transforming SensorSamples.",
+    )
+    parser.add_argument(
+        "--input-cache-dir",
+        default="Processed",
+        help="Directory containing precomputed input cache files.",
+    )
+    parser.add_argument(
+        "--input-cache-file",
+        help="Optional explicit input cache .pkl file for this run.",
+    )
 
     parser.add_argument(
         "--labels",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from argparse import Namespace
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,16 @@ def build_experiment_config(args: Namespace) -> dict:
         data_cfg = {
             "subjects": args.subjects or dataset_cfg.get("subjects"),
         }
+    data_cfg.update(
+        {
+            "use_processed": bool(getattr(args, "use_processed", False)),
+            "processed_dir": getattr(args, "processed_dir", "Processed"),
+            "processed_file": getattr(args, "processed_file", None),
+            "use_input_cache": bool(getattr(args, "use_input_cache", False)),
+            "input_cache_dir": getattr(args, "input_cache_dir", "Processed"),
+            "input_cache_file": getattr(args, "input_cache_file", None),
+        }
+    )
 
     dataset_config = {
         "name": args.dataset,
@@ -137,15 +148,24 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     train_subjects = config["data"].get("train_subjects")
     test_subjects = config["data"].get("test_subjects") or config["data"].get("subjects")
 
-    if usage_type == "few_shot":
+    if config["data"].get("use_input_cache"):
+        if usage_type == "few_shot":
+            validate_fewshot_split(train_subjects, test_subjects)
+            train_samples = _load_input_cache_samples(config, input_provider, train_subjects, labels)
+            print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
+            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels)
+        else:
+            train_samples = []
+            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels)
+    elif usage_type == "few_shot":
         validate_fewshot_split(train_subjects, test_subjects)
-        train_sensor_samples = dataset_loader.load(train_subjects, labels)
+        train_sensor_samples = _load_sensor_samples(config, dataset_loader, train_subjects, labels)
         print(f"Few-shot train label distribution: {label_distribution(train_sensor_samples)}")
         train_samples = input_provider.transform_all(train_sensor_samples)
-        eval_sensor_samples = dataset_loader.load(test_subjects, labels)
+        eval_sensor_samples = _load_sensor_samples(config, dataset_loader, test_subjects, labels)
     else:
         train_samples = []
-        eval_sensor_samples = dataset_loader.load(test_subjects, labels)
+        eval_sensor_samples = _load_sensor_samples(config, dataset_loader, test_subjects, labels)
 
     eval_cfg = config["evaluation"]
     print(f"Label distribution before sampling: {label_distribution(eval_sensor_samples)}")
@@ -172,7 +192,10 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
             raise RuntimeError(
                 f"Balanced debug subset failed. Expected {expected} samples per label, got {short}."
             )
-    eval_samples = input_provider.transform_all(eval_sensor_samples)
+    if config["data"].get("use_input_cache"):
+        eval_samples = eval_sensor_samples
+    else:
+        eval_samples = input_provider.transform_all(eval_sensor_samples)
     if not eval_samples:
         raise RuntimeError("No evaluation samples found.")
 
@@ -334,6 +357,115 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         print(f"Token usage missing calls: {usage_summary['token_usage_missing_count']}")
     print(f"Results: {Path(metrics['predictions_path'])}")
     return metrics
+
+
+def _load_sensor_samples(config: dict, dataset_loader, subjects, labels: list[int]):
+    data_config = config.get("data") or {}
+    if data_config.get("use_processed"):
+        return _load_processed_sensor_samples(config, dataset_loader, subjects, labels)
+    return dataset_loader.load(subjects, labels)
+
+
+def _load_processed_sensor_samples(config: dict, dataset_loader, subjects, labels: list[int]):
+    data_config = config.get("data") or {}
+    dataset_name = dataset_loader.name
+    processed_path = _processed_file_path(config, dataset_name)
+    if not processed_path.exists():
+        raise FileNotFoundError(
+            f"Processed cache not found: {processed_path}. "
+            "Run preprocess_datasets.py first, or remove --use-processed."
+        )
+
+    with processed_path.open("rb") as f:
+        payload = pickle.load(f)
+    samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
+    if not isinstance(samples, list):
+        raise ValueError(f"Processed cache must contain a list of SensorSample objects: {processed_path}")
+
+    subject_filter = {str(subject) for subject in subjects} if subjects else None
+    label_filter = {int(label) for label in labels}
+    filtered = []
+    for sample in samples:
+        sample_dataset = str(getattr(sample, "dataset", dataset_name))
+        sample_subject = str(getattr(sample, "subject", ""))
+        try:
+            sample_label = int(getattr(sample, "label"))
+        except (TypeError, ValueError):
+            continue
+        if sample_dataset and sample_dataset != dataset_name:
+            continue
+        if subject_filter and sample_subject not in subject_filter:
+            continue
+        if sample_label not in label_filter:
+            continue
+        filtered.append(sample)
+
+    print(
+        f"Loaded processed cache: {processed_path} "
+        f"({len(filtered)} selected / {len(samples)} stored samples)"
+    )
+    return filtered
+
+
+def _processed_file_path(config: dict, dataset_name: str) -> Path:
+    data_config = config.get("data") or {}
+    explicit = data_config.get("processed_file") or config.get("processed_file")
+    if explicit:
+        return Path(explicit)
+    processed_dir = Path(data_config.get("processed_dir") or config.get("processed_dir") or "Processed")
+    return processed_dir / f"{dataset_name}_binary_windows.pkl"
+
+
+def _load_input_cache_samples(config: dict, input_provider, subjects, labels: list[int]):
+    data_config = config.get("data") or {}
+    dataset_name = config["dataset"]["name"]
+    input_cache_path = _input_cache_file_path(config, dataset_name, input_provider.name)
+    if not input_cache_path.exists():
+        raise FileNotFoundError(
+            f"Input cache not found: {input_cache_path}. "
+            "Run preprocess_inputs.py first, or remove --use-input-cache."
+        )
+
+    with input_cache_path.open("rb") as f:
+        payload = pickle.load(f)
+    samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
+    if not isinstance(samples, list):
+        raise ValueError(f"Input cache must contain a list of LLMSample objects: {input_cache_path}")
+
+    subject_filter = {str(subject) for subject in subjects} if subjects else None
+    label_filter = {int(label) for label in labels}
+    filtered = []
+    for sample in samples:
+        sample_dataset = str(getattr(sample, "dataset", dataset_name))
+        sample_subject = str(getattr(sample, "subject", ""))
+        try:
+            sample_label = int(getattr(sample, "label"))
+        except (TypeError, ValueError):
+            continue
+        if sample_dataset and sample_dataset != dataset_name:
+            continue
+        if subject_filter and sample_subject not in subject_filter:
+            continue
+        if sample_label not in label_filter:
+            continue
+        filtered.append(sample)
+
+    print(
+        f"Loaded input cache: {input_cache_path} "
+        f"({len(filtered)} selected / {len(samples)} stored samples)"
+    )
+    return filtered
+
+
+def _input_cache_file_path(config: dict, dataset_name: str, input_name: str) -> Path:
+    data_config = config.get("data") or {}
+    explicit = data_config.get("input_cache_file") or config.get("input_cache_file")
+    if explicit:
+        return Path(explicit)
+    input_cache_dir = Path(
+        data_config.get("input_cache_dir") or config.get("input_cache_dir") or "Processed"
+    )
+    return input_cache_dir / f"{dataset_name}_{input_name}_samples.pkl"
 
 
 def _aggregate_llm_usage(usage_records: list[dict]) -> dict:

@@ -17,9 +17,9 @@ def get_feature_description_builder(dataset: str | None = None) -> BaseFeatureDe
 
         return HHARFeatureDescriptionInput()
     if key == "DREAMT":
-        from .dreamt_feature_description import DreaMTFeatureDescriptionInput
+        from .dreamt_feature_description import DREAMTFeatureDescriptionInput
 
-        return DreaMTFeatureDescriptionInput()
+        return DREAMTFeatureDescriptionInput()
     raise ValueError(f"Unknown feature description dataset: {dataset}")
 
 
