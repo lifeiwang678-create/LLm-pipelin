@@ -1,9 +1,15 @@
-﻿{
+{
   "run_name": "wesad_feature_multiagent_label_explanation",
-  "labels": [0, 1],
+  "labels": [
+    0,
+    1
+  ],
   "output_dir": "outputs_modular",
   "data": {
-    "subjects": ["S2", "S3"]
+    "subjects": [
+      "S2",
+      "S3"
+    ]
   },
   "input": {
     "type": "feature_description",
@@ -12,7 +18,11 @@
   },
   "lm_usage": {
     "type": "multi_agent",
-    "agents": ["eda_agent", "cardio_resp_agent", "motion_temp_agent"],
+    "agents": [
+      "eda_agent",
+      "cardio_resp_agent",
+      "motion_temp_agent"
+    ],
     "final_decider": "decision_maker"
   },
   "output": {
@@ -24,11 +34,10 @@
     "model": "qwen2.5-14b-instruct",
     "temperature": 0.0,
     "max_tokens": 192,
-    "timeout": 30
+    "timeout": 300
   },
   "evaluation": {
     "balanced_per_label": 10,
     "log_every": 10
   }
 }
-

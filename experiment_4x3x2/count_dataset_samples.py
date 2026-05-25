@@ -165,7 +165,7 @@ def count_hhar(loader, subjects: list[str] | None, labels: list[int]) -> dict[st
 
         group = split_by_time_gap(group, max_gap_sec=loader.max_gap_sec)
         for _, continuous_group in group.groupby("continuous_segment_id", sort=True):
-            continuous_group = continuous_group.sort_values("time_sec").reset_index(drop=True)
+            continuous_group = loader._downsample_motion_group(continuous_group)
             if continuous_group.empty:
                 continue
 

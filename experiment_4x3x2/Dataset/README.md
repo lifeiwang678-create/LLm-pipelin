@@ -24,6 +24,30 @@ config override only when reproducing traditional sliding-window ML settings.
 
 Use these keys in new configs. The older `window_sec` key is retained only for compatibility with older experiments.
 
+HHAR uses a HARGPT-style binary stair task:
+
+```text
+0 = walking downstairs
+1 = walking upstairs
+```
+
+The loader keeps only downstairs/upstairs phone IMU samples, removes invalid or
+null labels, uses phone accelerometer plus gyroscope when available, downsamples
+the IMU stream to 10 Hz tokens, and then creates 2-second windows with 1-second
+stride:
+
+```json
+{
+  "window_size": 20,
+  "stride_size": 10,
+  "sampling_rate": 10.0,
+  "include_gyroscope": true
+}
+```
+
+For few-shot HHAR experiments, use explicit user-level `--train-subjects` and
+`--test-subjects` so examples and evaluation samples do not share users.
+
 The framework now supports reusable processed dataset caches. Run from the
 `experiment_4x3x2/` folder:
 

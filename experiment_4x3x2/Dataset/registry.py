@@ -34,11 +34,15 @@ DATASET_REGISTRY = {
         "train_subjects": None,
         "test_subjects": None,
         "loader_kwargs": {
-            "window_size": 128,
-            "stride_size": 64,
-            "sampling_rate": 64.0,
+            # HARGPT-style HHAR binary stair setting:
+            # phone accelerometer + gyroscope are downsampled to 10 Hz tokens,
+            # then segmented into 2-second windows with 1-second stride.
+            "window_size": 20,
+            "stride_size": 10,
+            "sampling_rate": 10.0,
             "min_samples_per_window": 10,
             "max_gap_sec": 5.0,
+            "include_gyroscope": True,
         },
     },
     "DREAMT": {

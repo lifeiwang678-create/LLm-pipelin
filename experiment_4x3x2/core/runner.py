@@ -378,6 +378,13 @@ def _load_processed_sensor_samples(config: dict, dataset_loader, subjects, label
 
     with processed_path.open("rb") as f:
         payload = pickle.load(f)
+    metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+    _validate_cache_metadata(
+        config=config,
+        metadata=metadata,
+        cache_path=processed_path,
+        cache_kind="processed dataset",
+    )
     samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
     if not isinstance(samples, list):
         raise ValueError(f"Processed cache must contain a list of SensorSample objects: {processed_path}")
@@ -428,6 +435,14 @@ def _load_input_cache_samples(config: dict, input_provider, subjects, labels: li
 
     with input_cache_path.open("rb") as f:
         payload = pickle.load(f)
+    metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+    _validate_cache_metadata(
+        config=config,
+        metadata=metadata,
+        cache_path=input_cache_path,
+        cache_kind="input",
+        expected_input_type=input_provider.name,
+    )
     samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
     if not isinstance(samples, list):
         raise ValueError(f"Input cache must contain a list of LLMSample objects: {input_cache_path}")
@@ -466,6 +481,95 @@ def _input_cache_file_path(config: dict, dataset_name: str, input_name: str) -> 
         data_config.get("input_cache_dir") or config.get("input_cache_dir") or "Processed"
     )
     return input_cache_dir / f"{dataset_name}_{input_name}_samples.pkl"
+
+
+def _validate_cache_metadata(
+    config: dict,
+    metadata: dict,
+    cache_path: Path,
+    cache_kind: str,
+    expected_input_type: str | None = None,
+) -> None:
+    """Fail fast when a cache was built with stale dataset/input settings."""
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{cache_kind.capitalize()} cache has no metadata: {cache_path}")
+
+    expected_dataset = str(config["dataset"]["name"])
+    actual_dataset = str(metadata.get("dataset") or "")
+    if actual_dataset and actual_dataset != expected_dataset:
+        raise ValueError(
+            f"{cache_kind.capitalize()} cache dataset mismatch: {cache_path}. "
+            f"Expected {expected_dataset}, found {actual_dataset}."
+        )
+
+    if expected_input_type is not None:
+        actual_input_type = metadata.get("input_type")
+        if actual_input_type and str(actual_input_type) != str(expected_input_type):
+            raise ValueError(
+                f"Input cache type mismatch: {cache_path}. "
+                f"Expected {expected_input_type}, found {actual_input_type}."
+            )
+
+    source_metadata = metadata.get("source_processed_metadata")
+    if isinstance(source_metadata, dict):
+        loader_metadata = source_metadata
+    else:
+        loader_metadata = metadata
+
+    expected_kwargs = dict(config.get("dataset", {}).get("loader_kwargs") or {})
+    actual_kwargs = dict(loader_metadata.get("loader_kwargs") or {})
+    mismatches = _loader_kwarg_mismatches(expected_dataset, expected_kwargs, actual_kwargs)
+    if mismatches:
+        detail = "; ".join(
+            f"{key}: expected {expected!r}, cache has {actual!r}"
+            for key, expected, actual in mismatches
+        )
+        raise RuntimeError(
+            f"Stale {cache_kind} cache detected: {cache_path}. {detail}. "
+            "Delete/rebuild the cache with preprocess_datasets.py and preprocess_inputs.py, "
+            "or run without --use-processed/--use-input-cache."
+        )
+
+
+def _loader_kwarg_mismatches(
+    dataset_name: str,
+    expected_kwargs: dict,
+    actual_kwargs: dict,
+) -> list[tuple[str, object, object]]:
+    keys_by_dataset = {
+        "WESAD": ("physiology_window_sec", "acc_window_sec", "stride_sec"),
+        "HHAR": (
+            "window_size",
+            "stride_size",
+            "sampling_rate",
+            "min_samples_per_window",
+            "max_gap_sec",
+            "include_gyroscope",
+            "max_rows",
+        ),
+        "DREAMT": ("sampling_rate", "epoch_seconds", "stride_seconds", "min_epoch_fraction"),
+    }
+    keys = keys_by_dataset.get(str(dataset_name).upper(), tuple(expected_kwargs))
+    mismatches = []
+    for key in keys:
+        if key not in expected_kwargs:
+            continue
+        expected = expected_kwargs.get(key)
+        actual = actual_kwargs.get(key, None)
+        if not _cache_values_equal(expected, actual):
+            mismatches.append((key, expected, actual))
+    return mismatches
+
+
+def _cache_values_equal(expected, actual) -> bool:
+    if expected is None:
+        return actual is None
+    if isinstance(expected, bool):
+        return bool(actual) == expected
+    try:
+        return abs(float(expected) - float(actual)) < 1e-9
+    except (TypeError, ValueError):
+        return str(expected) == str(actual)
 
 
 def _aggregate_llm_usage(usage_records: list[dict]) -> dict:

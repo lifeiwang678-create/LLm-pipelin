@@ -163,6 +163,7 @@ for HHAR, where the folder contains:
 
 ```text
 Phones_accelerometer.csv
+Phones_gyroscope.csv
 ```
 
 ```powershell
@@ -191,12 +192,16 @@ Large local datasets are intentionally not tracked in Git.
 
 `Dataset/hhar_loader.py`
 
-- Loads `Phones_accelerometer.csv`.
+- Loads `Phones_accelerometer.csv` and `Phones_gyroscope.csv` when available.
 - Filters to upstairs/downstairs stair activities only.
-- Uses 2-second windows with 50% overlap by default:
-  - `window_size = 128`
-  - `stride_size = 64`
-  - `sampling_rate = 64`
+- Downsamples phone IMU streams to 10 Hz tokens for LLM prompts.
+- Uses 2-second windows with 1-second stride by default:
+  - `window_size = 20`
+  - `stride_size = 10`
+  - `sampling_rate = 10`
+  - `include_gyroscope = true`
+- Assigns each window label by majority activity label.
+- Use explicit user-level `--train-subjects` and `--test-subjects` for few-shot runs to avoid user leakage.
 - Supports `--max-rows` for debug reads of large CSV files.
 
 `Dataset/dreamt_loader.py`

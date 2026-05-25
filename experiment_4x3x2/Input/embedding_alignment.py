@@ -218,14 +218,16 @@ class EmbeddingAlignmentInput:
             }
         elif normalized == "HHAR":
             metadata = {
-                "acc_x": ChannelMetadata("ACC_X", "accelerometer", "mobile device", None, 0),
-                "acc_y": ChannelMetadata("ACC_Y", "accelerometer", "mobile device", None, 1),
-                "acc_z": ChannelMetadata("ACC_Z", "accelerometer", "mobile device", None, 2),
-                "acc": ChannelMetadata("ACC", "accelerometer", "mobile device", None),
-                "acc_mag": ChannelMetadata("ACC_MAG", "acceleration magnitude", "mobile device", None),
-                "gyro_x": ChannelMetadata("GYRO_X", "gyroscope", "mobile device", None, 0),
-                "gyro_y": ChannelMetadata("GYRO_Y", "gyroscope", "mobile device", None, 1),
-                "gyro_z": ChannelMetadata("GYRO_Z", "gyroscope", "mobile device", None, 2),
+                "acc_x": ChannelMetadata("ACC_X", "accelerometer", "mobile device", 10.0, 0),
+                "acc_y": ChannelMetadata("ACC_Y", "accelerometer", "mobile device", 10.0, 1),
+                "acc_z": ChannelMetadata("ACC_Z", "accelerometer", "mobile device", 10.0, 2),
+                "acc": ChannelMetadata("ACC", "accelerometer", "mobile device", 10.0),
+                "acc_mag": ChannelMetadata("ACC_MAG", "acceleration magnitude", "mobile device", 10.0),
+                "gyro_x": ChannelMetadata("GYRO_X", "gyroscope", "mobile device", 10.0, 0),
+                "gyro_y": ChannelMetadata("GYRO_Y", "gyroscope", "mobile device", 10.0, 1),
+                "gyro_z": ChannelMetadata("GYRO_Z", "gyroscope", "mobile device", 10.0, 2),
+                "gyro": ChannelMetadata("GYRO", "gyroscope", "mobile device", 10.0),
+                "gyro_mag": ChannelMetadata("GYRO_MAG", "gyroscope magnitude", "mobile device", 10.0),
             }
         else:
             metadata = {}
@@ -248,7 +250,7 @@ class EmbeddingAlignmentInput:
         key = self._normalize_key(raw_name)
         arr = np.asarray(values, dtype=object)
 
-        if key in {"chest_acc", "wrist_acc", "acc"} and arr.ndim == 2:
+        if key in {"chest_acc", "wrist_acc", "acc", "gyro"} and arr.ndim == 2:
             # 严格判定 ACC 形状,避免在 HHAR / DREAMT 上踩坑:
             # - 标准布局 (N, 3):N 行样本,每行 [x, y, z],按列切。
             # - 转置布局 (3, N):3 行轴 × N 时间步,按行切。
@@ -263,20 +265,26 @@ class EmbeddingAlignmentInput:
                 axis_values = None
 
             if axis_values is not None:
-                location = (
-                    "chest" if key.startswith("chest")
-                    else "wrist" if key.startswith("wrist")
-                    else "unknown"
-                )
-                prefix = f"{location}_acc" if location != "unknown" else "acc"
-                expanded = []
-                for axis, idx, values_1d in zip(["x", "y", "z"], [0, 1, 2], axis_values):
-                    meta_key = f"{prefix}_{axis}"
-                    meta = metadata.get(meta_key) or ChannelMetadata(
-                        f"ACC_{axis.upper()}", "accelerometer", location, None, idx
-                    )
-                    expanded.append((meta.channel, values_1d, meta))
-                return expanded
+                  location = (
+                      "chest" if key.startswith("chest")
+                      else "wrist" if key.startswith("wrist")
+                      else "mobile device" if key == "gyro"
+                      else "unknown"
+                  )
+                  sensor_prefix = "gyro" if key == "gyro" else "acc"
+                  prefix = f"{location}_{sensor_prefix}" if location not in {"unknown", "mobile device"} else sensor_prefix
+                  expanded = []
+                  for axis, idx, values_1d in zip(["x", "y", "z"], [0, 1, 2], axis_values):
+                      meta_key = f"{prefix}_{axis}"
+                      meta = metadata.get(meta_key) or ChannelMetadata(
+                          f"{sensor_prefix.upper()}_{axis.upper()}",
+                          "gyroscope" if sensor_prefix == "gyro" else "accelerometer",
+                          location,
+                          None,
+                          idx,
+                      )
+                      expanded.append((meta.channel, values_1d, meta))
+                  return expanded
             # 形状不符合 ACC 三轴布局时不强行切,落到下面的通用分支以便至少能输出一个通道。
 
         meta = metadata.get(key) or self._infer_channel_metadata(raw_name)

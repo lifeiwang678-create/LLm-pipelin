@@ -155,15 +155,15 @@ def split_by_time_gap(group_df, max_gap_sec=5.0):
 
 
 class HHARLoader:
-    """HHAR phone accelerometer loader for the modular 4x3x2 framework.
+    """HHAR phone IMU loader for the modular 4x3x2 framework.
 
     This keeps the original processing basis:
-    HHAR phone accelerometer CSV -> label normalization -> timestamp unit
-    inference -> continuous-segment split -> 2-second windows with 50% overlap.
+    HHAR phone accelerometer/gyroscope CSV -> label normalization -> timestamp
+    unit inference -> continuous-segment split -> downsample to 10 Hz tokens ->
+    2-second windows with 1-second stride.
 
-    The old script produced RF feature CSV files. In this framework the loader
-    instead returns SensorSample objects so raw_data, feature_description,
-    encoded_time_series, and extra_knowledge can all build their own prompts.
+    The HHAR task is a binary HARGPT-style stair task:
+    0 = walking downstairs, 1 = walking upstairs.
     """
 
     name = "HHAR"
@@ -171,13 +171,13 @@ class HHARLoader:
     def __init__(
         self,
         data_dir: str | Path,
-        window_size: int = 128,
-        stride_size: int = 64,
-        sampling_rate: float = 64.0,
+        window_size: int = 20,
+        stride_size: int = 10,
+        sampling_rate: float = 10.0,
         min_samples_per_window: int = MIN_SAMPLES_PER_WINDOW,
         max_gap_sec: float = 5.0,
         label_map: dict | None = None,
-        include_gyroscope: bool = False,
+        include_gyroscope: bool = True,
         max_rows: int | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
@@ -219,7 +219,7 @@ class HHARLoader:
     def _load_clean_accelerometer(self) -> pd.DataFrame:
         file_path = self._find_file(ACC_FILE)
         df = pd.read_csv(file_path, nrows=self.max_rows)
-        return self._clean_motion_dataframe(df, file_path=file_path)
+        return self._clean_motion_dataframe(df, file_path=file_path, log_distribution=True)
 
     def _load_clean_gyroscope(self) -> pd.DataFrame | None:
         try:
@@ -227,7 +227,7 @@ class HHARLoader:
         except FileNotFoundError:
             return None
         df = pd.read_csv(file_path, nrows=self.max_rows)
-        return self._clean_motion_dataframe(df, file_path=file_path)
+        return self._clean_motion_dataframe(df, file_path=file_path, log_distribution=False)
 
     def _find_file(self, filename: str) -> Path:
         if self.data_dir.is_file():
@@ -243,7 +243,12 @@ class HHARLoader:
 
         raise FileNotFoundError(f"Cannot find HHAR file {filename} under {self.data_dir}")
 
-    def _clean_motion_dataframe(self, df: pd.DataFrame, file_path: Path) -> pd.DataFrame:
+    def _clean_motion_dataframe(
+        self,
+        df: pd.DataFrame,
+        file_path: Path,
+        log_distribution: bool = False,
+    ) -> pd.DataFrame:
         required_cols = ["Creation_Time", "x", "y", "z", "User", "Model", "Device", "gt"]
         missing_cols = [column for column in required_cols if column not in df.columns]
         if missing_cols:
@@ -271,13 +276,21 @@ class HHARLoader:
             inplace=True,
         )
         out["time_sec_raw"] = infer_time_unit_and_convert_to_seconds(out["Creation_Time"].values)
-        out["time_sec"] = out["time_sec_raw"] - out["time_sec_raw"].min()
+        # Keep an absolute, unit-normalized timeline. Accelerometer and gyroscope
+        # are loaded from separate CSV files; subtracting each file's own minimum
+        # timestamp can shift the two streams relative to each other and break
+        # window matching.
+        out["time_sec"] = out["time_sec_raw"]
         out["label_int"] = out["activity_label"].apply(self._map_activity_to_label)
         out["original_activity_id"] = out["activity_label"].map(ORIGINAL_ACTIVITY_TO_INT)
         out.dropna(subset=["label_int"], inplace=True)
         out["label_int"] = out["label_int"].astype(int)
-        print(f"HHAR label distribution before filtering: {raw_distribution}")
-        print(f"HHAR label distribution after binary mapping: {out['label_int'].value_counts().sort_index().to_dict()}")
+        if log_distribution:
+            print(f"HHAR label distribution before filtering: {raw_distribution}")
+            print(
+                "HHAR label distribution after binary mapping: "
+                f"{out['label_int'].value_counts().sort_index().to_dict()}"
+            )
         out.sort_values(by=["user_id", "model", "device", "activity_label", "time_sec"], inplace=True)
         out.reset_index(drop=True, inplace=True)
         return out
@@ -297,13 +310,14 @@ class HHARLoader:
         labels_to_keep: set[int],
         gyro_df: pd.DataFrame | None,
     ) -> list[SensorSample]:
-        group_df = group_df.sort_values("time_sec").reset_index(drop=True)
+        group_df = self._downsample_motion_group(group_df)
         if group_df.empty:
             return []
 
         current_start = float(group_df["time_sec"].min())
         end_time = float(group_df["time_sec"].max())
         samples: list[SensorSample] = []
+        segment_id = int(group_df["continuous_segment_id"].iloc[0]) if "continuous_segment_id" in group_df else 0
         window_index = 0
 
         while current_start + self.window_sec <= end_time:
@@ -320,6 +334,7 @@ class HHARLoader:
                             label=label,
                             window_start=current_start,
                             window_end=current_end,
+                            segment_id=segment_id,
                             window_index=window_index,
                             gyro_df=gyro_df,
                         )
@@ -329,12 +344,51 @@ class HHARLoader:
 
         return samples
 
+    def _downsample_motion_group(self, group_df: pd.DataFrame) -> pd.DataFrame:
+        """Downsample one continuous HHAR IMU segment to the LLM token rate.
+
+        The original HHAR phone streams can be around 100/200 Hz. For prompt
+        inputs we follow the HARGPT-style setup and convert them to 10 Hz tokens
+        before windowing. Downsampling is done by time-bin averaging within each
+        continuous user/device/activity segment.
+        """
+        group_df = group_df.sort_values("time_sec").reset_index(drop=True)
+        if group_df.empty:
+            return group_df
+
+        start_time = float(group_df["time_sec"].min())
+        out = group_df.copy()
+        out["downsample_bin"] = np.floor((out["time_sec"] - start_time) * self.sampling_rate).astype(int)
+
+        rows = []
+        for _, bin_df in out.groupby("downsample_bin", sort=True):
+            first = bin_df.iloc[0]
+            rows.append(
+                {
+                    "Creation_Time": float(bin_df["Creation_Time"].mean()),
+                    "x": float(bin_df["x"].mean()),
+                    "y": float(bin_df["y"].mean()),
+                    "z": float(bin_df["z"].mean()),
+                    "user_id": first["user_id"],
+                    "model": first["model"],
+                    "device": first["device"],
+                    "activity_label": first["activity_label"],
+                    "time_sec_raw": float(bin_df["time_sec_raw"].mean()),
+                    "time_sec": start_time + (int(first["downsample_bin"]) / self.sampling_rate),
+                    "label_int": int(bin_df["label_int"].mode().iloc[0]),
+                    "original_activity_id": int(bin_df["original_activity_id"].mode().iloc[0]),
+                    "continuous_segment_id": int(first.get("continuous_segment_id", 0)),
+                }
+            )
+        return pd.DataFrame(rows)
+
     def _build_sample(
         self,
         window_df: pd.DataFrame,
         label: int,
         window_start: float,
         window_end: float,
+        segment_id: int,
         window_index: int,
         gyro_df: pd.DataFrame | None,
     ) -> SensorSample:
@@ -371,6 +425,7 @@ class HHARLoader:
             f"{window_df['model'].iloc[0]}_"
             f"{window_df['device'].iloc[0]}_"
             f"{window_df['activity_label'].iloc[0]}_"
+            f"seg{segment_id}_"
             f"{window_index}"
         )
         return SensorSample(
@@ -387,6 +442,7 @@ class HHARLoader:
                 "original_activity_id": int(window_df["original_activity_id"].mode().iloc[0]),
                 "window_start_sec": float(window_start),
                 "window_end_sec": float(window_end),
+                "continuous_segment_id": int(segment_id),
                 "window_index": int(window_index),
                 "n_samples": int(len(window_df)),
                 "window_features": features,
@@ -415,7 +471,9 @@ class HHARLoader:
             & (gyro_df["time_sec"] >= window_start)
             & (gyro_df["time_sec"] < window_end)
         ]
-        return matched if not matched.empty else None
+        if matched.empty:
+            return None
+        return self._downsample_motion_group(matched)
 
 
 __all__ = [
