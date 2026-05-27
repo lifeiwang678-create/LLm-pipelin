@@ -31,8 +31,13 @@ DATASET_REGISTRY = {
         "data_dir": "Dataset/HHAR",
         "labels": [0, 1],
         "subjects": None,
-        "train_subjects": None,
-        "test_subjects": None,
+        # Fixed user-independent split for LLM subset evaluation.
+        # a-d are used only for few-shot examples; g-i are unseen evaluation users.
+        # e/f are held out for validation/test-seen style analyses if needed.
+        "train_subjects": ["a", "b", "c", "d"],
+        "validation_subjects": ["e"],
+        "test_seen_subjects": ["f"],
+        "test_subjects": ["g", "h", "i"],
         "loader_kwargs": {
             # HARGPT-style HHAR binary stair setting:
             # phone accelerometer + gyroscope are downsampled to 10 Hz tokens,
@@ -50,8 +55,8 @@ DATASET_REGISTRY = {
         "data_dir": "Dataset/DREAMT",
         "labels": [0, 1],
         "subjects": None,
-        "train_subjects": None,
-        "test_subjects": None,
+        "train_subjects": ["S099"],
+        "test_subjects": ["S100"],
         "loader_kwargs": {
             "sampling_rate": 64,
             "epoch_seconds": 30.0,

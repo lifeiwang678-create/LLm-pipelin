@@ -62,6 +62,8 @@ def build_experiment_config(args: Namespace) -> dict:
             "use_input_cache": bool(getattr(args, "use_input_cache", False)),
             "input_cache_dir": getattr(args, "input_cache_dir", "Processed"),
             "input_cache_file": getattr(args, "input_cache_file", None),
+            "train_input_cache_file": getattr(args, "train_input_cache_file", None),
+            "eval_input_cache_file": getattr(args, "eval_input_cache_file", None),
         }
     )
 
@@ -151,12 +153,12 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     if config["data"].get("use_input_cache"):
         if usage_type == "few_shot":
             validate_fewshot_split(train_subjects, test_subjects)
-            train_samples = _load_input_cache_samples(config, input_provider, train_subjects, labels)
+            train_samples = _load_input_cache_samples(config, input_provider, train_subjects, labels, role="train")
             print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
-            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels)
+            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels, role="eval")
         else:
             train_samples = []
-            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels)
+            eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels, role="eval")
     elif usage_type == "few_shot":
         validate_fewshot_split(train_subjects, test_subjects)
         train_sensor_samples = _load_sensor_samples(config, dataset_loader, train_subjects, labels)
@@ -423,10 +425,10 @@ def _processed_file_path(config: dict, dataset_name: str) -> Path:
     return processed_dir / f"{dataset_name}_binary_windows.pkl"
 
 
-def _load_input_cache_samples(config: dict, input_provider, subjects, labels: list[int]):
+def _load_input_cache_samples(config: dict, input_provider, subjects, labels: list[int], role: str = "eval"):
     data_config = config.get("data") or {}
     dataset_name = config["dataset"]["name"]
-    input_cache_path = _input_cache_file_path(config, dataset_name, input_provider.name)
+    input_cache_path = _input_cache_file_path(config, dataset_name, input_provider.name, role=role)
     if not input_cache_path.exists():
         raise FileNotFoundError(
             f"Input cache not found: {input_cache_path}. "
@@ -472,8 +474,12 @@ def _load_input_cache_samples(config: dict, input_provider, subjects, labels: li
     return filtered
 
 
-def _input_cache_file_path(config: dict, dataset_name: str, input_name: str) -> Path:
+def _input_cache_file_path(config: dict, dataset_name: str, input_name: str, role: str = "eval") -> Path:
     data_config = config.get("data") or {}
+    role_key = "train_input_cache_file" if role == "train" else "eval_input_cache_file"
+    role_explicit = data_config.get(role_key) or config.get(role_key)
+    if role_explicit:
+        return Path(role_explicit)
     explicit = data_config.get("input_cache_file") or config.get("input_cache_file")
     if explicit:
         return Path(explicit)

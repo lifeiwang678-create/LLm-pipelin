@@ -195,26 +195,44 @@ class HHARLoader:
     def load(self, subjects: Iterable[str] | None, labels: list[int]) -> list[SensorSample]:
         df = self._load_clean_accelerometer()
         gyro_df = self._load_clean_gyroscope() if self.include_gyroscope else None
+        gyro_groups = self._group_gyroscope(gyro_df)
         subject_filter = {str(subject) for subject in subjects} if subjects else None
         labels_to_keep = {int(label) for label in labels}
 
         samples: list[SensorSample] = []
         group_cols = ["user_id", "model", "device", "activity_label"]
-        for _, group in df.groupby(group_cols, sort=True):
+        for group_key, group in df.groupby(group_cols, sort=True):
             subject = str(group["user_id"].iloc[0])
             if subject_filter and subject not in subject_filter:
                 continue
 
             group = split_by_time_gap(group, max_gap_sec=self.max_gap_sec)
+            gyro_group = gyro_groups.get(tuple(group_key)) if gyro_groups else None
+            if gyro_group is not None:
+                gyro_group = split_by_time_gap(gyro_group, max_gap_sec=self.max_gap_sec)
             for _, continuous_group in group.groupby("continuous_segment_id", sort=True):
+                segment_id = int(continuous_group["continuous_segment_id"].iloc[0])
+                continuous_gyro = None
+                if gyro_group is not None and "continuous_segment_id" in gyro_group:
+                    matching = gyro_group[gyro_group["continuous_segment_id"] == segment_id]
+                    continuous_gyro = matching if not matching.empty else gyro_group
                 samples.extend(
                     self._segment_continuous_group(
                         continuous_group,
                         labels_to_keep=labels_to_keep,
-                        gyro_df=gyro_df,
+                        gyro_df=continuous_gyro,
                     )
                 )
         return samples
+
+    def _group_gyroscope(self, gyro_df: pd.DataFrame | None) -> dict[tuple, pd.DataFrame]:
+        if gyro_df is None or gyro_df.empty:
+            return {}
+        group_cols = ["user_id", "model", "device", "activity_label"]
+        return {
+            tuple(group_key): group.copy()
+            for group_key, group in gyro_df.groupby(group_cols, sort=False)
+        }
 
     def _load_clean_accelerometer(self) -> pd.DataFrame:
         file_path = self._find_file(ACC_FILE)
@@ -314,6 +332,8 @@ class HHARLoader:
         if group_df.empty:
             return []
 
+        gyro_downsampled = self._downsample_motion_group(gyro_df) if gyro_df is not None and not gyro_df.empty else None
+
         current_start = float(group_df["time_sec"].min())
         end_time = float(group_df["time_sec"].max())
         samples: list[SensorSample] = []
@@ -336,7 +356,7 @@ class HHARLoader:
                             window_end=current_end,
                             segment_id=segment_id,
                             window_index=window_index,
-                            gyro_df=gyro_df,
+                            gyro_df=gyro_downsampled,
                         )
                     )
             current_start += self.stride_sec
@@ -471,9 +491,7 @@ class HHARLoader:
             & (gyro_df["time_sec"] >= window_start)
             & (gyro_df["time_sec"] < window_end)
         ]
-        if matched.empty:
-            return None
-        return self._downsample_motion_group(matched)
+        return matched if not matched.empty else None
 
 
 __all__ = [

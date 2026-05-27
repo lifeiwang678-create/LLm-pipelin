@@ -141,6 +141,7 @@ DREAMT sleep-stage labels are mapped as:
 |-- run_experiment.py
 |-- preprocess_datasets.py
 |-- preprocess_inputs.py
+|-- prepare_llm_subsets.py
 |-- count_dataset_samples.py
 |-- requirements.txt
 ```
@@ -315,6 +316,11 @@ Use `preprocess_datasets.py` to cut windows once and save reusable binary
 `SensorSample` caches. This avoids re-reading raw files and re-cutting windows
 for every Input x LM x Output combination.
 
+Keep full processed dataset caches for traditional ML baselines and dataset
+statistics. Full LLM inference can be expensive, so the recommended LLM
+protocol uses subject-independent / unseen-user subset caches generated from
+the full input caches.
+
 Processed files are stored in `Processed/`:
 
 ```text
@@ -405,6 +411,65 @@ python main.py -dataset WESAD -Input feature_description -LM few_shot -output la
 
 For `extra_knowledge`, the input cache depends on `knowledge_text`,
 `knowledge_file`, and `knowledge_mode`. Rebuild the cache if those values change.
+
+## LLM Evaluation Subsets
+
+The recommended LLM protocol fixes train/test subjects before sampling:
+
+- Few-shot examples are selected only from `train_subjects`.
+- LLM evaluation samples are selected only from unseen `test_subjects`.
+- The same subject must not appear in both few-shot examples and evaluation.
+
+Default subject-independent splits are defined in `Dataset/registry.py`:
+
+| Dataset | Train subjects | Unseen evaluation subjects |
+| --- | --- | --- |
+| WESAD | `S2 S3 S4 S5 S6` | `S7 S8` |
+| HHAR | `a b c d` | `g h i` |
+| DREAMT | `S099` | `S100` |
+
+Generate the three LLM subset levels after input caches exist:
+
+```powershell
+python prepare_llm_subsets.py -dataset all -Input all --overwrite
+```
+
+This writes evaluation-only `LLMSample` caches under:
+
+```text
+Processed/LLMSubsets/<DATASET>/<debug|pilot|main>/
+```
+
+Subset levels:
+
+- `debug`: 3 samples per label, used to check the 24-combination flow.
+- `pilot`: up to 50 samples per label, used to compare rough method trends.
+- `main`: subject-and-label balanced unseen-subject subset. By default this
+  selects up to 100 samples per subject per label, clipped by available data.
+
+Direct evaluation on an unseen HHAR debug subset:
+
+```powershell
+python main.py -dataset HHAR -Input raw_data -LM direct -output label_only `
+  --use-input-cache `
+  --eval-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
+  --log-every 1
+```
+
+Few-shot evaluation with examples from train subjects and evaluation from an
+unseen subset:
+
+```powershell
+python main.py -dataset HHAR -Input raw_data -LM few_shot -output label_only `
+  --use-input-cache `
+  --train-subjects a b c d `
+  --test-subjects g h i `
+  --train-input-cache-file "Processed/HHAR_raw_data_samples.pkl" `
+  --eval-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
+  --few-shot-n-per-class 1 `
+  --few-shot-example-max-chars 800 `
+  --log-every 1
+```
 
 For dataset-size checks without saving samples or calling the LLM:
 

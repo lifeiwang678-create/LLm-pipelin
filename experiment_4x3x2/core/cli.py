@@ -79,6 +79,14 @@ def parse_args() -> argparse.Namespace:
         "--input-cache-file",
         help="Optional explicit input cache .pkl file for this run.",
     )
+    parser.add_argument(
+        "--train-input-cache-file",
+        help="Optional input cache .pkl file used only for few-shot training examples.",
+    )
+    parser.add_argument(
+        "--eval-input-cache-file",
+        help="Optional input cache .pkl file used only for evaluation samples.",
+    )
 
     parser.add_argument(
         "--labels",
