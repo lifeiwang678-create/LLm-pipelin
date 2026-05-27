@@ -217,7 +217,9 @@ def build_loader_config(args: argparse.Namespace) -> dict[str, Any]:
         "loader_kwargs": dict(dataset_defaults.get("loader_kwargs", {})),
     }
     if args.max_rows is not None:
-        config["max_rows"] = args.max_rows
+        if args.dataset != "HHAR":
+            raise ValueError("--max-rows is only supported for HHAR.")
+        config["loader_kwargs"]["max_rows"] = int(args.max_rows)
     return config
 
 

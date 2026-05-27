@@ -124,9 +124,9 @@ def estimate_snr_db(x: np.ndarray, fs: int, low: float = 0.5, high: float = 20.0
 
 
 class DREAMTLoader:
-    """DREAMT raw 64 Hz CSV loader for the modular LLM experiment framework.
+    """DREAMT raw CSV loader for the modular LLM experiment framework.
 
-    This keeps the previous DREAMT preprocessing basis: raw 64 Hz files,
+    This keeps the previous DREAMT preprocessing basis: raw wearable files,
     30-second epoch segmentation, Sleep/Wake label mapping, optional filtering,
     and lightweight artifact metadata. It intentionally does not run the old
     LightGBM/SMOTE/5-fold baseline; model training belongs outside the 4x3x2
@@ -143,7 +143,7 @@ class DREAMTLoader:
         stride_seconds: float | None = None,
         window_size: int | None = None,
         stride_size: int | None = None,
-        min_epoch_fraction: float = 0.5,
+        min_epoch_fraction: float = 0.8,
         label_map: dict[str, int] | None = None,
         skip_artifact_epochs: bool = False,
     ) -> None:
@@ -191,7 +191,8 @@ class DREAMTLoader:
         if not files:
             raise FileNotFoundError(
                 f"No DREAMT raw CSV files found under {self.data_dir}. "
-                "Expected files like data_64Hz/S099_whole_df.csv."
+                "Expected files like data_100Hz/S099_PSG_df_updated.csv "
+                "or data_64Hz/S099_whole_df.csv."
             )
 
         labels_to_keep = {int(label) for label in labels}
@@ -213,29 +214,51 @@ class DREAMTLoader:
             return selected
         return [files_by_subject[key] for key in sorted(files_by_subject)]
 
+    def _discover_subjects(self) -> list[str]:
+        return sorted({subject_id_from_path(path) for path in self._discover_files()})
+
     def _discover_files(self) -> list[Path]:
         if self.data_dir.is_file():
             return [self.data_dir]
 
-        search_roots = [self.data_dir]
         data_64hz = self.data_dir / "data_64Hz"
-        if data_64hz.exists():
-            search_roots.insert(0, data_64hz)
+        data_100hz = self.data_dir / "data_100Hz"
+
+        if self.sampling_rate == 100:
+            root_patterns = [
+                (data_100hz, ["S*_PSG_df_updated.csv", "*_PSG_df_updated.csv"]),
+                (self.data_dir, ["S*_PSG_df_updated.csv", "*_PSG_df_updated.csv"]),
+            ]
+        elif self.sampling_rate == 64:
+            root_patterns = [
+                (data_64hz, ["S*_whole_df.csv", "*_whole_df.csv"]),
+                (self.data_dir, ["S*_whole_df.csv", "*_whole_df.csv"]),
+            ]
+        else:
+            root_patterns = [
+                (self.data_dir, ["S*_PSG_df_updated.csv", "*_PSG_df_updated.csv"]),
+                (self.data_dir, ["S*_whole_df.csv", "*_whole_df.csv"]),
+            ]
 
         files: list[Path] = []
-        for root in search_roots:
-            files.extend(sorted(root.glob("S*_whole_df.csv")))
-            files.extend(sorted(root.glob("*_whole_df.csv")))
+        for root, patterns in root_patterns:
+            if not root.exists():
+                continue
+            for pattern in patterns:
+                files.extend(sorted(root.glob(pattern)))
         if not files and self.data_dir.exists():
+            files.extend(sorted(self.data_dir.rglob("*_PSG_df_updated.csv")))
             files.extend(sorted(self.data_dir.rglob("*_whole_df.csv")))
         return sorted(set(files))
 
     def _load_subject_file(self, file_path: Path, labels_to_keep: set[int]) -> list[SensorSample]:
         subject = subject_id_from_path(file_path)
-        df = pd.read_csv(file_path)
-        cols = self._detect_columns(df)
+        header = pd.read_csv(file_path, nrows=0)
+        cols = self._detect_columns(header)
         if cols["label"] is None:
             raise ValueError(f"Cannot find DREAMT sleep-stage label column in {file_path.name}.")
+        usecols = sorted({column for column in cols.values() if column is not None})
+        df = pd.read_csv(file_path, usecols=usecols)
 
         raw_distribution = df[cols["label"]].value_counts(dropna=False).to_dict()
         df = self._prepare_dataframe(df, cols)
@@ -259,6 +282,7 @@ class DREAMTLoader:
         if df.empty:
             return samples
 
+        times = df["time_sec"].to_numpy(dtype=float)
         window_sec = float(self.window_size) / float(self.sampling_rate)
         stride_sec = float(self.stride_size) / float(self.sampling_rate)
         if stride_sec <= 0:
@@ -267,17 +291,17 @@ class DREAMTLoader:
                 "推出的 stride_sec 非正, 请检查 loader_kwargs。"
             )
 
-        start_time = float(df["time_sec"].iloc[0])
-        end_time = float(df["time_sec"].iloc[-1])
+        start_time = float(times[0])
+        end_time = float(times[-1])
 
         epoch_index = 0
         current_start = start_time
         # 加一个极小 epsilon 防止浮点截断把最后一个完整窗丢掉
         while current_start + window_sec <= end_time + 1e-9:
             current_end = current_start + window_sec
-            group = df.loc[
-                (df["time_sec"] >= current_start) & (df["time_sec"] < current_end)
-            ]
+            start_idx = int(np.searchsorted(times, current_start, side="left"))
+            end_idx = int(np.searchsorted(times, current_end, side="left"))
+            group = df.iloc[start_idx:end_idx]
             if len(group) >= self.min_samples:
                 label = mode_label(group["label_mapped"])
                 if not pd.isna(label):

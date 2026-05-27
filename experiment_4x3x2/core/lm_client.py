@@ -5,7 +5,13 @@ import time
 import requests
 
 
-class LMStudioClient:
+class OpenAICompatibleClient:
+    """Client for OpenAI-compatible chat/completions servers.
+
+    Works with local servers such as vLLM and LM Studio, and with hosted
+    providers that expose the same /v1/chat/completions shape.
+    """
+
     def __init__(
         self,
         api_url: str = "http://127.0.0.1:1234/v1",
@@ -52,28 +58,65 @@ class LMStudioClient:
             "max_tokens": int(max_tokens) if max_tokens is not None else self.max_tokens,
         }
         start = time.perf_counter()
-        response = requests.post(
-            f"{self.api_url}/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=self.timeout,
-        )
+        endpoint = f"{self.api_url}/chat/completions"
+        try:
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            elapsed_time_sec = time.perf_counter() - start
+            self._record_usage(prompt, "", {}, elapsed_time_sec)
+            raise RuntimeError(
+                f"OpenAI-compatible chat completion request failed before receiving a response. "
+                f"Endpoint: {endpoint}. Prompt characters: {len(prompt)}. Error: {exc}"
+            ) from exc
+
         elapsed_time_sec = time.perf_counter() - start
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
             self._record_usage(prompt, "", {}, elapsed_time_sec)
-            detail = response.text.strip()
-            if len(detail) > 1200:
-                detail = detail[:1200] + "..."
+            detail = _truncate_detail(response.text)
             raise RuntimeError(
-                f"LM Studio request failed with HTTP {response.status_code}. "
+                f"OpenAI-compatible chat completion request failed with HTTP {response.status_code}. "
                 f"Prompt characters: {len(prompt)}. Response: {detail}"
             ) from exc
 
-        response_json = response.json()
-        completion = response_json["choices"][0]["message"]["content"].strip()
-        self._record_usage(prompt, completion, response_json.get("usage", {}) or {}, elapsed_time_sec)
+        try:
+            response_json = response.json()
+        except ValueError as exc:
+            self._record_usage(prompt, "", {}, elapsed_time_sec)
+            detail = _truncate_detail(response.text)
+            raise RuntimeError(
+                "OpenAI-compatible chat completion response was not valid JSON. "
+                f"Prompt characters: {len(prompt)}. Response: {detail}"
+            ) from exc
+
+        try:
+            content = response_json["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            usage = response_json.get("usage", {}) if isinstance(response_json, dict) else {}
+            self._record_usage(prompt, "", usage or {}, elapsed_time_sec)
+            detail = _truncate_detail(str(response_json))
+            raise RuntimeError(
+                "OpenAI-compatible chat completion response did not contain "
+                f"choices[0].message.content. Prompt characters: {len(prompt)}. Response: {detail}"
+            ) from exc
+
+        if not isinstance(content, str):
+            usage = response_json.get("usage", {}) if isinstance(response_json, dict) else {}
+            self._record_usage(prompt, "", usage or {}, elapsed_time_sec)
+            raise RuntimeError(
+                "OpenAI-compatible chat completion response content was not text. "
+                f"Prompt characters: {len(prompt)}. Content type: {type(content).__name__}."
+            )
+
+        completion = content.strip()
+        usage = response_json.get("usage", {}) if isinstance(response_json, dict) else {}
+        self._record_usage(prompt, completion, usage or {}, elapsed_time_sec)
         return completion
 
     def _record_usage(self, prompt: str, completion: str, usage: dict, elapsed_time_sec: float) -> None:
@@ -101,3 +144,14 @@ def _optional_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _truncate_detail(text: str, limit: int = 1200) -> str:
+    detail = str(text).strip()
+    if len(detail) > limit:
+        return detail[:limit] + "..."
+    return detail
+
+
+# Backward-compatible alias for older imports/config references.
+LMStudioClient = OpenAICompatibleClient

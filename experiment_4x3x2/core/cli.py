@@ -39,9 +39,17 @@ def parse_args() -> argparse.Namespace:
         help="Output type.",
     )
 
-    parser.add_argument("-llm", default="qwen2.5-14b-instruct", help="LM Studio model name.")
-    parser.add_argument("--api-url", default="http://127.0.0.1:1234/v1", help="LM Studio API URL.")
-    parser.add_argument("--api-key", default="lm-studio", help="LM Studio API key.")
+    parser.add_argument("-llm", default="qwen2.5-14b-instruct", help="OpenAI-compatible model name.")
+    parser.add_argument(
+        "--api-url",
+        default="http://127.0.0.1:1234/v1",
+        help="OpenAI-compatible API base URL, such as vLLM or LM Studio.",
+    )
+    parser.add_argument(
+        "--api-key",
+        default="lm-studio",
+        help="API key for the OpenAI-compatible server. Local vLLM usually ignores this unless configured.",
+    )
     parser.add_argument(
         "--data-dir",
         help="Optional dataset directory override. For DREAMT, use the folder containing data_64Hz or data_64Hz itself.",
@@ -99,6 +107,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subjects", nargs="*", help="Evaluation subjects for direct or multi_agent runs.")
     parser.add_argument("--train-subjects", nargs="*", help="Few-shot training subjects.")
     parser.add_argument("--test-subjects", nargs="*", help="Few-shot testing subjects.")
+    parser.add_argument(
+        "--subject-split",
+        choices=["subject_independent", "all"],
+        default=None,
+        help=(
+            "Subject split policy. Defaults to subject_independent, which evaluates "
+            "only held-out test subjects. Use all only for debugging or legacy runs."
+        ),
+    )
     parser.add_argument("--few-shot-n-per-class", type=int, help="Few-shot examples per label.")
 
     parser.add_argument(
@@ -140,6 +157,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional balanced debug samples per label.",
     )
 
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Concurrent LLM requests. Defaults to 1 for the original serial behavior.",
+    )
     parser.add_argument("--log-every", type=int, default=10, help="Progress print interval.")
 
     return parser.parse_args()

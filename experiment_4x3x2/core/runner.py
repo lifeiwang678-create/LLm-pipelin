@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import pickle
+import re
 from argparse import Namespace
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -12,8 +14,8 @@ from Input import build_input_provider
 from LM import build_lm_usage
 from Output import build_output_handler
 
-from .lm_client import LMStudioClient
-from .splits import validate_fewshot_split
+from .lm_client import OpenAICompatibleClient
+from .splits import normalize_subjects, validate_fewshot_split, validate_subject_independent_split
 
 
 DEFAULT_LM_CLIENT_CONFIG = {
@@ -36,24 +38,38 @@ def build_experiment_config(args: Namespace) -> dict:
     default_intermediate_max_tokens = 512
     loader_kwargs = dict(dataset_cfg.get("loader_kwargs", {}))
     if getattr(args, "max_rows", None) is not None:
+        if args.dataset != "HHAR":
+            raise ValueError("--max-rows is only supported for HHAR.")
         loader_kwargs["max_rows"] = int(args.max_rows)
 
     if args.LM == "few_shot":
-        if args.subjects and not args.test_subjects:
+        if args.subjects and not args.test_subjects and not args.train_subjects:
             raise ValueError(
                 "--subjects is only used for direct-mode evaluation. "
-                "For few_shot, use --train-subjects and --test-subjects explicitly."
+                "For few_shot, use --train-subjects/--test-subjects or rely on "
+                "the dataset's subject-independent defaults."
             )
-        if not args.train_subjects or not args.test_subjects:
-            raise ValueError("few_shot requires explicit --train-subjects and --test-subjects.")
-        data_cfg = {
-            "train_subjects": args.train_subjects,
-            "test_subjects": args.test_subjects,
-        }
-    else:
-        data_cfg = {
-            "subjects": args.subjects or dataset_cfg.get("subjects"),
-        }
+    data_cfg = {
+        "subjects": args.subjects if args.subjects is not None else dataset_cfg.get("subjects"),
+        "train_subjects": (
+            args.train_subjects
+            if args.train_subjects is not None
+            else dataset_cfg.get("train_subjects")
+        ),
+        "test_subjects": (
+            args.test_subjects
+            if args.test_subjects is not None
+            else dataset_cfg.get("test_subjects")
+        ),
+        "subject_split": (
+            args.subject_split
+            if getattr(args, "subject_split", None) is not None
+            else dataset_cfg.get("subject_split", "subject_independent")
+        ),
+        "subjects_explicit": args.subjects is not None,
+        "train_subjects_explicit": args.train_subjects is not None,
+        "test_subjects_explicit": args.test_subjects is not None,
+    }
     data_cfg.update(
         {
             "use_processed": bool(getattr(args, "use_processed", False)),
@@ -127,6 +143,7 @@ def build_experiment_config(args: Namespace) -> dict:
         "evaluation": {
             "balanced_per_label": args.balanced_per_label,
             "log_every": args.log_every,
+            "concurrency": int(getattr(args, "concurrency", 1) or 1),
         },
     }
 
@@ -147,8 +164,11 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     output_handler = build_output_handler(config["output"], labels)
     usage_type = _normalize_lm_usage_type(config["lm_usage"].get("type", "direct"))
 
-    train_subjects = config["data"].get("train_subjects")
-    test_subjects = config["data"].get("test_subjects") or config["data"].get("subjects")
+    train_subjects, test_subjects = _resolve_run_subjects(config, dataset_loader, usage_type)
+    if train_subjects:
+        print(f"Train subjects: {train_subjects}")
+    if test_subjects:
+        print(f"Test/eval subjects: {test_subjects}")
 
     if config["data"].get("use_input_cache"):
         if usage_type == "few_shot":
@@ -201,21 +221,23 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     if not eval_samples:
         raise RuntimeError("No evaluation samples found.")
 
+    output_instructions = output_handler.instructions(labels)
     lm_usage = build_lm_usage(
         config["lm_usage"],
         labels=labels,
         input_name=input_provider.name,
         train_samples=train_samples,
-        output_instructions=output_handler.instructions(labels),
+        output_instructions=output_instructions,
         dataset=dataset_loader.name,
     )
-    client = LMStudioClient(**config["lm_client"])
 
     print(f"Dataset: {dataset_loader.name}")
     print(f"Input: {input_provider.name}")
     print(f"LM usage: {lm_usage.name}")
     print(f"Output: {output_handler.name}")
     print(f"Eval samples: {len(eval_samples)}")
+    concurrency = max(1, int(eval_cfg.get("concurrency", 1) or 1))
+    print(f"LLM request concurrency: {concurrency}")
 
     # multi_agent 中间步骤的输出 (evidence_extraction、candidate_evaluation) 体量大、
     # 且是嵌套结构,旧实现直接写进 sample.meta 然后展开到 CSV 列里,既污染列、又会
@@ -229,7 +251,6 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     trace_path.unlink(missing_ok=True)
     trace_written = False
 
-    records = []
     # 仅保留这些已知安全的 meta key 写进 CSV,避免新 Input/LM 模块往 meta 里塞嵌套结构
     # 后悄悄把 CSV 列结构搞乱。新增 meta 字段需要显式登记到这里。
     sample_meta_safe_keys = {
@@ -254,59 +275,21 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         "window_end_sec",
         "epoch_id",
     }
-    for idx, sample in enumerate(eval_samples, 1):
-        usage_start = len(getattr(client, "usage_records", []))
-        if hasattr(lm_usage, "run_agent_pipeline"):
-            raw_response = lm_usage.run_agent_pipeline(sample, client)
-        else:
-            prompt = lm_usage.build_prompt(sample)
-            raw_response = client.complete(prompt)
-        llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
-        llm_usage.update(_estimate_sample_cost(llm_usage, config))
-        parsed = output_handler.parse(raw_response)
-        valid = bool(parsed.get("valid", parsed.get("label") is not None))
-
-        # 如果 LM usage 暴露了 last_trace (目前只有 MultiAgentUsage 会),按行追加到 JSONL,
-        # 然后立即清空,防止下一条样本误用上一条的 trace。
-        trace = getattr(lm_usage, "last_trace", None)
-        if trace:
-            with trace_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sample_index": idx,
-                    "subject": sample.subject,
-                    "y_true": sample.label,
-                    "trace": trace,
-                }, ensure_ascii=False) + "\n")
-            trace_written = True
-            if hasattr(lm_usage, "last_trace"):
-                lm_usage.last_trace = None
-
-        flat_meta = {k: v for k, v in sample.meta.items() if k in sample_meta_safe_keys}
-        records.append(
-            {
-                "sample_id": sample.meta.get("sample_id", idx),
-                "dataset": sample.dataset,
-                "subject": sample.subject,
-                "window_start": sample.meta.get("window_start", sample.meta.get("window_start_sec", "")),
-                "window_end": sample.meta.get("window_end", sample.meta.get("window_end_sec", "")),
-                "true_label": sample.label,
-                "predicted_label": int(parsed["label"]) if valid else "",
-                "y_true": sample.label,
-                "y_pred": int(parsed["label"]) if valid else "",
-                "valid": valid,
-                "parse_error": parsed.get("parse_error", ""),
-                "explanation": parsed.get("explanation", ""),
-                "raw_response": raw_response,
-                "input_type": sample.meta.get("input_type", input_provider.name),
-                "lm_type": usage_type,
-                "output_type": config["output"].get("type", "label_only"),
-                **llm_usage,
-                **flat_meta,
-            }
-        )
-
-        if idx % int(eval_cfg.get("log_every", 10)) == 0 or idx == len(eval_samples):
-            print(f"{idx}/{len(eval_samples)} done")
+    records, trace_written = _run_eval_samples(
+        eval_samples=eval_samples,
+        config=config,
+        labels=labels,
+        input_name=input_provider.name,
+        train_samples=train_samples,
+        output_instructions=output_instructions,
+        dataset=dataset_loader.name,
+        output_handler=output_handler,
+        usage_type=usage_type,
+        sample_meta_safe_keys=sample_meta_safe_keys,
+        trace_path=trace_path,
+        concurrency=concurrency,
+        log_every=int(eval_cfg.get("log_every", 10) or 10),
+    )
 
     # 把 trace 文件路径写入 config,让 summarize_and_save 一起记到 metrics.json,方便事后定位
     if trace_written:
@@ -361,11 +344,275 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     return metrics
 
 
+def _resolve_run_subjects(config: dict, dataset_loader, usage_type: str) -> tuple[list[str] | None, list[str] | None]:
+    data_config = config.get("data") or {}
+    split_mode = str(data_config.get("subject_split", "subject_independent") or "subject_independent").lower()
+    subjects = normalize_subjects(data_config.get("subjects"))
+    train_subjects = normalize_subjects(data_config.get("train_subjects"))
+    test_subjects = normalize_subjects(data_config.get("test_subjects"))
+
+    if split_mode == "all":
+        if usage_type == "few_shot":
+            train_subjects, test_subjects = _complete_subject_independent_split(
+                dataset_loader,
+                train_subjects,
+                test_subjects,
+                subjects,
+            )
+            validate_fewshot_split(train_subjects, test_subjects)
+            return train_subjects, test_subjects
+        return train_subjects, subjects
+
+    if split_mode != "subject_independent":
+        raise ValueError(
+            f"Unknown subject_split={split_mode!r}. "
+            "Use 'subject_independent' or 'all'."
+        )
+
+    # Explicit --subjects is still allowed as a debug/evaluation subset for
+    # direct and multi-agent runs. Formal/default runs use held-out test subjects.
+    if (
+        usage_type != "few_shot"
+        and subjects
+        and data_config.get("subjects_explicit")
+        and not data_config.get("test_subjects_explicit")
+    ):
+        return train_subjects, subjects
+
+    train_subjects, test_subjects = _complete_subject_independent_split(
+        dataset_loader,
+        train_subjects,
+        test_subjects,
+        subjects,
+    )
+    validate_subject_independent_split(train_subjects, test_subjects)
+    if usage_type == "few_shot":
+        validate_fewshot_split(train_subjects, test_subjects)
+    return train_subjects, test_subjects
+
+
+def _complete_subject_independent_split(
+    dataset_loader,
+    train_subjects: list[str] | None,
+    test_subjects: list[str] | None,
+    subjects: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    if train_subjects and test_subjects:
+        return train_subjects, test_subjects
+
+    all_subjects = subjects or _discover_subjects_for_split(dataset_loader)
+    if len(all_subjects) < 2:
+        raise ValueError(
+            "Subject-independent split requires at least two subjects. "
+            "Pass --train-subjects and --test-subjects explicitly."
+        )
+
+    if train_subjects and not test_subjects:
+        test_subjects = [subject for subject in all_subjects if subject not in set(train_subjects)]
+    elif test_subjects and not train_subjects:
+        train_subjects = [subject for subject in all_subjects if subject not in set(test_subjects)]
+    else:
+        train_subjects = [all_subjects[0]]
+        test_subjects = all_subjects[1:]
+
+    return train_subjects or [], test_subjects or []
+
+
+def _discover_subjects_for_split(dataset_loader) -> list[str]:
+    discover = getattr(dataset_loader, "_discover_subjects", None)
+    if not callable(discover):
+        raise ValueError(
+            f"{dataset_loader.name} loader cannot auto-discover subjects. "
+            "Pass --train-subjects and --test-subjects explicitly."
+        )
+    subjects = [str(subject) for subject in discover()]
+    return sorted(subjects, key=_subject_sort_key)
+
+
+def _subject_sort_key(subject: str) -> list[object]:
+    parts = re.split(r"(\d+)", str(subject))
+    return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+
 def _load_sensor_samples(config: dict, dataset_loader, subjects, labels: list[int]):
     data_config = config.get("data") or {}
     if data_config.get("use_processed"):
         return _load_processed_sensor_samples(config, dataset_loader, subjects, labels)
     return dataset_loader.load(subjects, labels)
+
+
+def _run_eval_samples(
+    *,
+    eval_samples: list,
+    config: dict,
+    labels: list[int],
+    input_name: str,
+    train_samples: list,
+    output_instructions: str,
+    dataset: str,
+    output_handler,
+    usage_type: str,
+    sample_meta_safe_keys: set[str],
+    trace_path: Path,
+    concurrency: int,
+    log_every: int,
+) -> tuple[list[dict], bool]:
+    total = len(eval_samples)
+    log_every = max(1, int(log_every or 10))
+    records_by_index: list[dict | None] = [None] * total
+    trace_written = False
+
+    if total == 0:
+        return [], trace_written
+
+    if concurrency <= 1:
+        for idx, sample in enumerate(eval_samples, 1):
+            result = _run_one_sample(
+                idx=idx,
+                sample=sample,
+                config=config,
+                labels=labels,
+                input_name=input_name,
+                train_samples=train_samples,
+                output_instructions=output_instructions,
+                dataset=dataset,
+                output_handler=output_handler,
+                usage_type=usage_type,
+                sample_meta_safe_keys=sample_meta_safe_keys,
+            )
+            records_by_index[idx - 1] = result["record"]
+            if result["trace_record"]:
+                _append_trace_record(trace_path, result["trace_record"])
+                trace_written = True
+
+            if idx % log_every == 0 or idx == total:
+                print(f"{idx}/{total} done")
+
+        return [record for record in records_by_index if record is not None], trace_written
+
+    workers = min(max(1, int(concurrency)), total)
+    print(f"Using {workers} worker threads for LLM requests.")
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                _run_one_sample,
+                idx=idx,
+                sample=sample,
+                config=config,
+                labels=labels,
+                input_name=input_name,
+                train_samples=train_samples,
+                output_instructions=output_instructions,
+                dataset=dataset,
+                output_handler=output_handler,
+                usage_type=usage_type,
+                sample_meta_safe_keys=sample_meta_safe_keys,
+            ): idx
+            for idx, sample in enumerate(eval_samples, 1)
+        }
+        completed = 0
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                for pending in futures:
+                    if pending is not future:
+                        pending.cancel()
+                raise RuntimeError(f"Evaluation failed at sample {idx}/{total}.") from exc
+
+            records_by_index[idx - 1] = result["record"]
+            if result["trace_record"]:
+                _append_trace_record(trace_path, result["trace_record"])
+                trace_written = True
+
+            completed += 1
+            if completed % log_every == 0 or completed == total:
+                print(f"{completed}/{total} done")
+
+    missing = [idx for idx, record in enumerate(records_by_index, 1) if record is None]
+    if missing:
+        raise RuntimeError(f"Missing evaluation records for sample indexes: {missing[:10]}")
+    return [record for record in records_by_index if record is not None], trace_written
+
+
+def _run_one_sample(
+    *,
+    idx: int,
+    sample,
+    config: dict,
+    labels: list[int],
+    input_name: str,
+    train_samples: list,
+    output_instructions: str,
+    dataset: str,
+    output_handler,
+    usage_type: str,
+    sample_meta_safe_keys: set[str],
+) -> dict:
+    client = OpenAICompatibleClient(**config["lm_client"])
+    lm_usage = build_lm_usage(
+        config["lm_usage"],
+        labels=labels,
+        input_name=input_name,
+        train_samples=train_samples,
+        output_instructions=output_instructions,
+        dataset=dataset,
+    )
+
+    usage_start = len(getattr(client, "usage_records", []))
+    if hasattr(lm_usage, "run_agent_pipeline"):
+        raw_response = lm_usage.run_agent_pipeline(sample, client)
+    else:
+        prompt = lm_usage.build_prompt(sample)
+        raw_response = client.complete(prompt)
+
+    llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
+    llm_usage.update(_estimate_sample_cost(llm_usage, config))
+    parsed = output_handler.parse(raw_response)
+    valid = bool(parsed.get("valid", parsed.get("label") is not None))
+
+    trace = getattr(lm_usage, "last_trace", None)
+    trace_record = None
+    if trace:
+        trace_record = {
+            "sample_index": idx,
+            "subject": sample.subject,
+            "y_true": sample.label,
+            "trace": trace,
+        }
+        if hasattr(lm_usage, "last_trace"):
+            lm_usage.last_trace = None
+
+    meta = dict(getattr(sample, "meta", {}) or {})
+    flat_meta = {k: v for k, v in meta.items() if k in sample_meta_safe_keys}
+    predicted_label = int(parsed["label"]) if valid else ""
+    record = {
+        "sample_id": meta.get("sample_id", idx),
+        "dataset": sample.dataset,
+        "subject": sample.subject,
+        "window_start": meta.get("window_start", meta.get("window_start_sec", "")),
+        "window_end": meta.get("window_end", meta.get("window_end_sec", "")),
+        "true_label": sample.label,
+        "predicted_label": predicted_label,
+        "y_true": sample.label,
+        "y_pred": predicted_label,
+        "valid": valid,
+        "parse_error": parsed.get("parse_error", ""),
+        "explanation": parsed.get("explanation", ""),
+        "raw_response": raw_response,
+        "input_type": meta.get("input_type", input_name),
+        "lm_type": usage_type,
+        "output_type": config["output"].get("type", "label_only"),
+        **llm_usage,
+        **flat_meta,
+    }
+    return {"record": record, "trace_record": trace_record}
+
+
+def _append_trace_record(trace_path: Path, trace_record: dict) -> None:
+    with trace_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(trace_record, ensure_ascii=False) + "\n")
 
 
 def _load_processed_sensor_samples(config: dict, dataset_loader, subjects, labels: list[int]):
@@ -647,8 +894,11 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     normalized["input"] = input_config
 
     data_config = dict(normalized.get("data") or {})
-    if not any(key in data_config for key in ("subjects", "train_subjects", "test_subjects")):
+    data_config.setdefault("subject_split", dataset_defaults.get("subject_split", "subject_independent"))
+    if not any(data_config.get(key) is not None for key in ("subjects", "train_subjects", "test_subjects")):
         data_config["subjects"] = dataset_defaults.get("subjects")
+        data_config["train_subjects"] = dataset_defaults.get("train_subjects")
+        data_config["test_subjects"] = dataset_defaults.get("test_subjects")
     normalized["data"] = data_config
 
     lm_usage_config = dict(normalized.get("lm_usage") or {})
@@ -663,7 +913,9 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     lm_client_config.update(dict(normalized.get("lm_client") or {}))
     normalized["lm_client"] = lm_client_config
 
-    normalized["evaluation"] = dict(normalized.get("evaluation") or {})
+    evaluation_config = dict(normalized.get("evaluation") or {})
+    evaluation_config.setdefault("concurrency", 1)
+    normalized["evaluation"] = evaluation_config
     normalized.setdefault("output_dir", "Results")
     normalized.setdefault("run_name", _default_run_name(normalized))
     return normalized

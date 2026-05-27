@@ -48,13 +48,24 @@ stride:
 For few-shot HHAR experiments, use explicit user-level `--train-subjects` and
 `--test-subjects` so examples and evaluation samples do not share users.
 
+The default experiment protocol is subject-independent. Dataset defaults in
+`Dataset/registry.py` provide non-overlapping `train_subjects` and
+`test_subjects` where practical; loaders with discoverable subject IDs can also
+derive a deterministic first-subject train / remaining-subjects test split.
+
+DREAMT defaults to the wearable-only 64 Hz files under `Dataset/DREAMT/data_64Hz`
+with 30-second epochs, 30-second stride, and `min_epoch_fraction = 0.8`.
+Use subject shards for full DREAMT preprocessing because one dataset-level
+raw-window pickle can exceed memory.
+
 The framework now supports reusable processed dataset caches. Run from the
 `experiment_4x3x2/` folder:
 
 ```powershell
-python preprocess_datasets.py -dataset WESAD --subjects S2 S3 --overwrite
-python preprocess_datasets.py -dataset HHAR --data-dir "<HHAR_DATA_DIR>" --overwrite
-python preprocess_datasets.py -dataset DREAMT --data-dir "<DREAMT_DATA_DIR>" --subjects S099 S100 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset WESAD --subjects S2 S3 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset HHAR --data-dir "<HHAR_DATA_DIR>" --overwrite
+.venv/bin/python preprocess_datasets.py -dataset DREAMT --data-dir "<DREAMT_DATA_DIR>" --subjects S099 S100 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset DREAMT --shard-by-subject --overwrite
 ```
 
 For full WESAD LLM experiments, prefer `preprocess_inputs.py --from-raw`
@@ -66,7 +77,10 @@ This saves dataset-level binary window files:
 ```text
 Processed/WESAD_binary_windows.pkl
 Processed/HHAR_binary_windows.pkl
-Processed/DREAMT_binary_windows.pkl
+Processed/DREAMT_binary_windows_manifest.json
+Processed/DREAMT_binary_windows_S002.pkl
+Processed/DREAMT_binary_windows_S003.pkl
+...
 ```
 
 These cache files contain `SensorSample` objects with `signals`, `label`, and
@@ -76,7 +90,7 @@ Input-level caches are generated separately with `preprocess_inputs.py`, for
 example:
 
 ```powershell
-python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 S3 --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 S3 --overwrite
 ```
 
 You can override the location in a config file with:

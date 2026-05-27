@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.schema import Sample, label_block
+from core.schema import Sample, label_block, label_rules_block
 
 
 # multi_agent 前两步 (evidence / candidate_evaluation) 默认输出 token 上限。
@@ -59,6 +59,9 @@ Classify the state of this sample using the selected input representation: {self
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Agents:
 {agent_lines}
 - {self.final_decider}: compare the agents' conclusions and choose the final label.
@@ -66,6 +69,8 @@ Agents:
 Important constraints:
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
+- Apply the dataset-specific label rules exactly.
+- Do not treat one high absolute sensor value as sufficient evidence for label 1 or the positive class.
 - Keep any reasoning internal unless the selected output format asks for explanation.
 - The final answer must follow the requested JSON schema.
 
@@ -118,6 +123,9 @@ Selected input representation:
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Allowed evidence sources:
 - raw signal values
 - statistical features
@@ -133,6 +141,8 @@ Constraints:
 - Do not invent sensor values, features, labels, or retrieved examples.
 - Current sample features are primary evidence.
 - Dataset knowledge is supporting context only.
+- Extract evidence for both allowed labels, including evidence against label 1 or the positive class.
+- Treat high absolute sensor values cautiously when subject-specific baseline may differ.
 - Output JSON only.
 
 Sample content:
@@ -164,6 +174,9 @@ Evaluate each allowed label using the extracted evidence.
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Constraints:
 - Consider only labels from the allowed label set.
 - Do not invent new labels.
@@ -172,6 +185,8 @@ Constraints:
 - If evidence is insufficient, state uncertainty.
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
+- Apply the dataset-specific label rules exactly.
+- Evaluate whether apparent label-1 evidence may also be compatible with label 0, movement, artifacts, or subject variation.
 - Output JSON only.
 
 Sample content:
@@ -216,6 +231,9 @@ Choose the final label for the sample using the provided sample content and prev
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Critical constraints:
 - Produce the final answer only.
 - Follow the existing output instructions exactly.
@@ -223,6 +241,8 @@ Critical constraints:
 - Do not output anything outside the required JSON format.
 - Consider only labels from the allowed label set.
 - Do not use knowledge outside the provided prompt.
+- Apply the dataset-specific label rules exactly.
+- Do not default to label 1 or the positive class because a single sensor feature is high.
 - Predict only the final label for the current sample.
 
 Sample content:
@@ -237,7 +257,7 @@ Agent 2 candidate evaluation response:
 {self.output_instructions}"""
 
     def _call_llm(self, llm_client, prompt: str, max_tokens: int | None = None) -> str:
-        # 优先尝试给 client 传 per-call max_tokens (新版 LMStudioClient 支持)。
+        # 优先尝试给 client 传 per-call max_tokens (OpenAICompatibleClient 支持)。
         # 如果用户接了一个旧版/第三方 client 不支持该关键字,降级为不带覆盖再调一次,
         # 保证 multi_agent 仍然可用 (代价是中间步骤可能被截断,届时去看 last_trace 排查)。
         if hasattr(llm_client, "complete"):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.schema import Sample, label_block
+from core.schema import Sample, label_block, label_rules_block
 
 
 class DirectUsage:
@@ -27,10 +27,15 @@ Classify the state of this sample using the selected input representation: {self
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Important constraints:
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
-- Do not guess randomly.
+- Apply the dataset-specific label rules exactly.
+- Do not predict label 1 or the positive class from one high absolute sensor value alone.
+- Consider evidence for both labels before choosing the final label.
 - Do not add extra explanation outside JSON.
 - Process this sample independently.
 

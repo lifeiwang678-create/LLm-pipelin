@@ -195,7 +195,7 @@ class HHARLoader:
     def load(self, subjects: Iterable[str] | None, labels: list[int]) -> list[SensorSample]:
         df = self._load_clean_accelerometer()
         gyro_df = self._load_clean_gyroscope() if self.include_gyroscope else None
-        gyro_groups = self._group_gyroscope(gyro_df)
+        gyro_groups = self._build_gyro_group_index(gyro_df)
         subject_filter = {str(subject) for subject in subjects} if subjects else None
         labels_to_keep = {int(label) for label in labels}
 
@@ -225,14 +225,28 @@ class HHARLoader:
                 )
         return samples
 
-    def _group_gyroscope(self, gyro_df: pd.DataFrame | None) -> dict[tuple, pd.DataFrame]:
+    def _build_gyro_group_index(self, gyro_df: pd.DataFrame | None) -> dict[tuple, pd.DataFrame]:
+        """Pre-index and downsample gyro streams once per HHAR group."""
         if gyro_df is None or gyro_df.empty:
             return {}
+
         group_cols = ["user_id", "model", "device", "activity_label"]
-        return {
-            tuple(group_key): group.copy()
-            for group_key, group in gyro_df.groupby(group_cols, sort=False)
-        }
+        grouped: dict[tuple, pd.DataFrame] = {}
+        for group_key, group in gyro_df.groupby(group_cols, sort=False):
+            group = split_by_time_gap(group, max_gap_sec=self.max_gap_sec)
+            parts = [
+                self._downsample_motion_group(continuous_group)
+                for _, continuous_group in group.groupby("continuous_segment_id", sort=True)
+            ]
+            parts = [part for part in parts if not part.empty]
+            if not parts:
+                continue
+            grouped[group_key] = (
+                pd.concat(parts, ignore_index=True)
+                .sort_values("time_sec")
+                .reset_index(drop=True)
+            )
+        return grouped
 
     def _load_clean_accelerometer(self) -> pd.DataFrame:
         file_path = self._find_file(ACC_FILE)
@@ -332,21 +346,21 @@ class HHARLoader:
         if group_df.empty:
             return []
 
-        gyro_downsampled = self._downsample_motion_group(gyro_df) if gyro_df is not None and not gyro_df.empty else None
-
-        current_start = float(group_df["time_sec"].min())
-        end_time = float(group_df["time_sec"].max())
+        gyro_downsampled = gyro_df if gyro_df is not None and not gyro_df.empty else None
+        times = group_df["time_sec"].to_numpy(dtype=float)
+        current_start = float(times[0])
+        end_time = float(times[-1])
         samples: list[SensorSample] = []
         segment_id = int(group_df["continuous_segment_id"].iloc[0]) if "continuous_segment_id" in group_df else 0
         window_index = 0
 
         while current_start + self.window_sec <= end_time:
             current_end = current_start + self.window_sec
-            window_df = group_df[
-                (group_df["time_sec"] >= current_start) & (group_df["time_sec"] < current_end)
-            ]
+            start_idx = int(np.searchsorted(times, current_start, side="left"))
+            end_idx = int(np.searchsorted(times, current_end, side="left"))
+            window_df = group_df.iloc[start_idx:end_idx]
             if len(window_df) >= self.min_samples_per_window:
-                label = int(window_df["label_int"].mode().iloc[0])
+                label = int(window_df["label_int"].iloc[0])
                 if label in labels_to_keep:
                     samples.append(
                         self._build_sample(
@@ -378,29 +392,46 @@ class HHARLoader:
 
         start_time = float(group_df["time_sec"].min())
         out = group_df.copy()
+        if "continuous_segment_id" not in out.columns:
+            out["continuous_segment_id"] = 0
         out["downsample_bin"] = np.floor((out["time_sec"] - start_time) * self.sampling_rate).astype(int)
 
-        rows = []
-        for _, bin_df in out.groupby("downsample_bin", sort=True):
-            first = bin_df.iloc[0]
-            rows.append(
-                {
-                    "Creation_Time": float(bin_df["Creation_Time"].mean()),
-                    "x": float(bin_df["x"].mean()),
-                    "y": float(bin_df["y"].mean()),
-                    "z": float(bin_df["z"].mean()),
-                    "user_id": first["user_id"],
-                    "model": first["model"],
-                    "device": first["device"],
-                    "activity_label": first["activity_label"],
-                    "time_sec_raw": float(bin_df["time_sec_raw"].mean()),
-                    "time_sec": start_time + (int(first["downsample_bin"]) / self.sampling_rate),
-                    "label_int": int(bin_df["label_int"].mode().iloc[0]),
-                    "original_activity_id": int(bin_df["original_activity_id"].mode().iloc[0]),
-                    "continuous_segment_id": int(first.get("continuous_segment_id", 0)),
-                }
-            )
-        return pd.DataFrame(rows)
+        grouped = out.groupby("downsample_bin", sort=True, as_index=True)
+        means = grouped[["Creation_Time", "x", "y", "z", "time_sec_raw"]].mean()
+        first = grouped[
+            [
+                "user_id",
+                "model",
+                "device",
+                "activity_label",
+                "label_int",
+                "original_activity_id",
+                "continuous_segment_id",
+            ]
+        ].first()
+        downsampled = pd.concat([means, first], axis=1)
+        bins = downsampled.index.to_numpy(dtype=np.float64)
+        downsampled["time_sec"] = start_time + (bins / self.sampling_rate)
+        downsampled["label_int"] = downsampled["label_int"].astype(int)
+        downsampled["original_activity_id"] = downsampled["original_activity_id"].astype(int)
+        downsampled["continuous_segment_id"] = downsampled["continuous_segment_id"].astype(int)
+        return downsampled.reset_index(drop=True)[
+            [
+                "Creation_Time",
+                "x",
+                "y",
+                "z",
+                "user_id",
+                "model",
+                "device",
+                "activity_label",
+                "time_sec_raw",
+                "time_sec",
+                "label_int",
+                "original_activity_id",
+                "continuous_segment_id",
+            ]
+        ]
 
     def _build_sample(
         self,
@@ -426,7 +457,7 @@ class HHARLoader:
             "acc_mag": acc_mag,
         }
 
-        gyro_window = self._matching_gyro_window(window_df, window_start, window_end, gyro_df)
+        gyro_window = self._matching_gyro_window(window_start, window_end, gyro_df)
         if gyro_window is not None and len(gyro_window) >= self.min_samples_per_window:
             gx = gyro_window["x"].to_numpy(dtype=float)
             gy = gyro_window["y"].to_numpy(dtype=float)
@@ -471,7 +502,6 @@ class HHARLoader:
 
     def _matching_gyro_window(
         self,
-        acc_window: pd.DataFrame,
         window_start: float,
         window_end: float,
         gyro_df: pd.DataFrame | None,
@@ -479,19 +509,12 @@ class HHARLoader:
         if gyro_df is None:
             return None
 
-        user_id = acc_window["user_id"].iloc[0]
-        model = acc_window["model"].iloc[0]
-        device = acc_window["device"].iloc[0]
-        activity = acc_window["activity_label"].iloc[0]
-        matched = gyro_df[
-            (gyro_df["user_id"] == user_id)
-            & (gyro_df["model"] == model)
-            & (gyro_df["device"] == device)
-            & (gyro_df["activity_label"] == activity)
-            & (gyro_df["time_sec"] >= window_start)
-            & (gyro_df["time_sec"] < window_end)
-        ]
-        return matched if not matched.empty else None
+        times = gyro_df["time_sec"]
+        start_idx = int(times.searchsorted(window_start, side="left"))
+        end_idx = int(times.searchsorted(window_end, side="left"))
+        if end_idx <= start_idx:
+            return None
+        return gyro_df.iloc[start_idx:end_idx]
 
 
 __all__ = [

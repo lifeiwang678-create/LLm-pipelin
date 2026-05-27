@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import random
 
-from core.schema import Sample, label_block
+from core.schema import Sample, label_block, label_names_for_dataset, label_rules_block
 
 
 class FewShotUsage:
@@ -54,8 +55,8 @@ class FewShotUsage:
                 f"""Example {idx}
 {self._format_example_input(example.input_text)}
 
-Correct label:
-- {example.label}"""
+Correct answer JSON:
+{self._format_example_answer(example.label)}"""
             )
 
         return f"""You are given time-series samples for classification.
@@ -67,10 +68,16 @@ The examples and the final sample use the same input representation.
 Labels:
 {label_block(self.labels, self.dataset)}
 
+Dataset-specific label rules:
+{label_rules_block(self.dataset)}
+
 Important constraints:
 - Use only the information provided in this prompt.
 - Use the examples only as label-format and decision-reference demonstrations.
 - Do not use knowledge outside the provided prompt.
+- Apply the dataset-specific label rules exactly.
+- Do not predict label 1 or the positive class from one high absolute sensor value alone.
+- Consider evidence for both labels before choosing the final label.
 - Do not add extra explanation outside JSON.
 - Predict only the label of the final sample.
 
@@ -90,6 +97,14 @@ Now classify the following final sample.
             input_text[: self.example_max_chars].rstrip()
             + "\n\n[Example input truncated for few-shot context length.]"
         )
+
+    def _format_example_answer(self, label: int) -> str:
+        names = label_names_for_dataset(self.dataset)
+        label_name = names.get(int(label), str(label))
+        answer = {"predicted_state": int(label)}
+        if '"explanation"' in self.output_instructions:
+            answer["explanation"] = f"Example label: {label_name}."
+        return json.dumps(answer, ensure_ascii=False)
 
 
 __all__ = ["FewShotUsage"]

@@ -2,6 +2,7 @@ param(
     [switch]$FullData,
     [int]$BalancedPerLabel = 1,
     [int]$LogEvery = 1,
+    [int]$Concurrency = 1,
     [string]$HharDataDir = "",
     [string]$DreamtDataDir = "",
     [int]$HharMaxRows = 3500000,
@@ -11,12 +12,12 @@ param(
     [switch]$UseInputCache,
     [string]$InputCacheDir = "Processed",
     [string[]]$WesadDirectSubjects = @("S2", "S3"),
-    [string[]]$WesadFewShotTrainSubjects = @("S2"),
-    [string[]]$WesadFewShotTestSubjects = @("S3"),
-    [string[]]$HharFewShotTrainSubjects = @("a"),
-    [string[]]$HharFewShotTestSubjects = @("b"),
-    [string[]]$DreamtFewShotTrainSubjects = @("S099"),
-    [string[]]$DreamtFewShotTestSubjects = @("S100"),
+    [string[]]$WesadFewShotTrainSubjects = @(),
+    [string[]]$WesadFewShotTestSubjects = @(),
+    [string[]]$HharFewShotTrainSubjects = @(),
+    [string[]]$HharFewShotTestSubjects = @(),
+    [string[]]$DreamtFewShotTrainSubjects = @(),
+    [string[]]$DreamtFewShotTestSubjects = @(),
     [string]$StartDataset = "",
     [string]$StartInput = "",
     [string]$StartLM = "",
@@ -44,14 +45,14 @@ $outputs = @(
     "label_explanation"
 )
 
-# Adjust these subject splits if your local data has different available subjects.
-# For few-shot, train and test subjects must not overlap.
+# By default, main.py uses the subject-independent split from Dataset/registry.py.
+# Pass the *FewShot* arrays only when overriding those defaults.
 $datasetSettings = @{
     "WESAD" = @{
         "DataDir" = $null
         # In debug mode, direct/multi_agent use a small subject subset.
-        # In -FullData mode this subject filter is omitted, so WESAD uses all
-        # available cached/loaded subjects.
+        # In -FullData mode this subject filter is omitted; main.py then uses
+        # the held-out test subjects from the subject-independent split.
         "DirectSubjects" = if ($FullData) { @() } else { $WesadDirectSubjects }
         "FewShotTrainSubjects" = $WesadFewShotTrainSubjects
         "FewShotTestSubjects" = $WesadFewShotTestSubjects
@@ -108,6 +109,8 @@ function Add-CommonArgs {
 
     [void]$ArgsList.Add("--log-every")
     [void]$ArgsList.Add([string]$LogEvery)
+    [void]$ArgsList.Add("--concurrency")
+    [void]$ArgsList.Add([string]$Concurrency)
 }
 
 foreach ($datasetName in @("WESAD", "HHAR", "DREAMT")) {
@@ -148,14 +151,18 @@ foreach ($datasetName in @("WESAD", "HHAR", "DREAMT")) {
                 Add-CommonArgs -ArgsList $argsList -DatasetName $datasetName -Settings $settings
 
                 if ($lmName -eq "few_shot") {
-                    [void]$argsList.Add("--train-subjects")
-                    foreach ($subject in $settings.FewShotTrainSubjects) {
-                        [void]$argsList.Add($subject)
+                    if ($settings.FewShotTrainSubjects.Count -gt 0) {
+                        [void]$argsList.Add("--train-subjects")
+                        foreach ($subject in $settings.FewShotTrainSubjects) {
+                            [void]$argsList.Add($subject)
+                        }
                     }
 
-                    [void]$argsList.Add("--test-subjects")
-                    foreach ($subject in $settings.FewShotTestSubjects) {
-                        [void]$argsList.Add($subject)
+                    if ($settings.FewShotTestSubjects.Count -gt 0) {
+                        [void]$argsList.Add("--test-subjects")
+                        foreach ($subject in $settings.FewShotTestSubjects) {
+                            [void]$argsList.Add($subject)
+                        }
                     }
 
                     [void]$argsList.Add("--few-shot-n-per-class")

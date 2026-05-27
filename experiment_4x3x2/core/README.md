@@ -12,7 +12,7 @@ This folder contains shared orchestration code for the modular experiment framew
 Run an experiment with:
 
 ```powershell
-python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
+.venv/bin/python main.py -dataset WESAD -Input raw_data -LM direct -output label_only
 ```
 
 By default, `main.py` does not sample or balance the evaluation set. Add `--balanced-per-label` only for debug runs.
@@ -22,17 +22,17 @@ For WESAD, the registry default is `subjects: None`, so the loader auto-discover
 The runner can skip repeated raw-data processing with two explicit cache modes:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed
-python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-input-cache
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-input-cache
 ```
 
 - `--use-processed` loads `Processed/<DATASET>_binary_windows.pkl`.
 - `--use-input-cache` loads `Processed/<DATASET>_<INPUT>_samples.pkl`.
 
-Install dependencies from the repository root before running experiments:
+Install dependencies from the `experiment_4x3x2/` directory before running experiments:
 
 ```powershell
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
 ```
 
 By default, `main.py` saves compact CSV files to `Results/`, for example:
@@ -46,7 +46,7 @@ Config files can override the result folder with `output_dir`.
 The config-based runner uses the same shared execution logic:
 
 ```powershell
-python run_experiment.py --config configs/example_experiment.json
+.venv/bin/python run_experiment.py --config configs/example_experiment.json
 ```
 
 Change combinations by editing the config:
@@ -144,5 +144,5 @@ Example few-shot config data block:
 Run one experiment:
 
 ```powershell
-python run_experiment.py --config configs/E1_raw_direct_label_only.json
+.venv/bin/python run_experiment.py --config configs/E1_raw_direct_label_only.json
 ```

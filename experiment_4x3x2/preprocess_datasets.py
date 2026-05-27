@@ -92,7 +92,7 @@ def build_loader_config(dataset: str, args: argparse.Namespace) -> dict[str, Any
         config["data_dir"] = args.dreamt_data_dir
 
     if dataset == "HHAR" and args.max_rows is not None:
-        config["max_rows"] = args.max_rows
+        config["loader_kwargs"]["max_rows"] = int(args.max_rows)
     return config
 
 

@@ -10,7 +10,7 @@ Use it from inside that folder:
 
 ```powershell
 cd experiment_4x3x2
-python main.py -h
+.venv/bin/python main.py -h
 ```
 
 `experiment_4x3x2/` contains the maintained binary-classification 4 x 3 x 2 modular pipeline:
@@ -42,8 +42,8 @@ For faster repeated experiments, the official framework supports two cache layer
 Build them from inside `experiment_4x3x2/`:
 
 ```powershell
-python preprocess_datasets.py -dataset WESAD --subjects S2 S3 --overwrite
-python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 S3 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset WESAD --subjects S2 S3 --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 S3 --overwrite
 ```
 
 Then run from cache with `--use-processed` or `--use-input-cache`.

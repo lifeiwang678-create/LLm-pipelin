@@ -5,7 +5,7 @@ import sys
 
 import numpy as np
 
-from core.runner import _resolve_dataset_config
+from core.runner import _normalize_run_config, _resolve_dataset_config, _resolve_run_subjects
 from core.schema import SensorSample
 from Input import build_input_provider
 from Input.feature_description import get_feature_description_builder
@@ -58,6 +58,67 @@ def test_runner_dataset_injection_rules() -> None:
         assert "Dataset name is required" in str(exc)
     else:
         raise AssertionError("Missing dataset should raise a clear ValueError")
+
+
+class _SubjectDiscoveryLoader:
+    def __init__(self, name: str, subjects: list[str]) -> None:
+        self.name = name
+        self._subjects = subjects
+
+    def _discover_subjects(self) -> list[str]:
+        return list(self._subjects)
+
+
+def test_subject_independent_default_split() -> None:
+    loader = _SubjectDiscoveryLoader("WESAD", ["S2", "S3", "S4"])
+    config = _normalize_run_config(
+        {
+            "dataset": {"name": "WESAD"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+        },
+        dataset_name=None,
+    )
+
+    train_subjects, test_subjects = _resolve_run_subjects(config, loader, "direct")
+    assert train_subjects == ["S2"]
+    assert test_subjects
+    assert set(train_subjects).isdisjoint(test_subjects)
+    assert "S2" not in test_subjects
+    assert "S3" in test_subjects
+
+    few_shot_config = dict(config)
+    few_shot_config["lm_usage"] = {"type": "few_shot"}
+    few_train, few_test = _resolve_run_subjects(few_shot_config, loader, "few_shot")
+    assert few_train == train_subjects
+    assert few_test == test_subjects
+
+
+def test_subject_independent_auto_discovery_split() -> None:
+    loader = _SubjectDiscoveryLoader("DREAMT", ["S010", "S002", "S003"])
+    config = _normalize_run_config(
+        {
+            "dataset": {"name": "DREAMT"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+        },
+        dataset_name=None,
+    )
+    train_subjects, test_subjects = _resolve_run_subjects(config, loader, "direct")
+    assert train_subjects == ["S002"]
+    assert test_subjects == ["S003", "S010"]
+
+    all_config = _normalize_run_config(
+        {
+            "dataset": {"name": "DREAMT"},
+            "data": {"subject_split": "all"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+        },
+        dataset_name=None,
+    )
+    _, eval_subjects = _resolve_run_subjects(all_config, loader, "direct")
+    assert eval_subjects is None
 
 
 def test_wesad_feature_description_mock_inputs() -> None:
@@ -209,6 +270,8 @@ def main() -> None:
     tests = [
         test_factory_returns_dataset_specific_classes,
         test_runner_dataset_injection_rules,
+        test_subject_independent_default_split,
+        test_subject_independent_auto_discovery_split,
         test_wesad_feature_description_mock_inputs,
         test_hhar_feature_description_motion_only,
         test_dreamt_feature_description_dataset_fields,

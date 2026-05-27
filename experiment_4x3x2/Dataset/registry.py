@@ -15,8 +15,24 @@ DATASET_REGISTRY = {
         # --subjects 时只加载 2 个 subject, 容易被误以为是"全量 WESAD"路径。
         # 若需要小子集 debug, 请显式 --subjects S2 S3 等。
         "subjects": None,
-        "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
-        "test_subjects": ["S7", "S8"],
+        "subject_split": "subject_independent",
+        "train_subjects": ["S2"],
+        "test_subjects": [
+            "S3",
+            "S4",
+            "S5",
+            "S6",
+            "S7",
+            "S8",
+            "S9",
+            "S10",
+            "S11",
+            "S13",
+            "S14",
+            "S15",
+            "S16",
+            "S17",
+        ],
         "loader_kwargs": {
             "physiology_window_sec": 60.0,
             "acc_window_sec": 5.0,
@@ -31,13 +47,9 @@ DATASET_REGISTRY = {
         "data_dir": "Dataset/HHAR",
         "labels": [0, 1],
         "subjects": None,
-        # Fixed user-independent split for LLM subset evaluation.
-        # a-d are used only for few-shot examples; g-i are unseen evaluation users.
-        # e/f are held out for validation/test-seen style analyses if needed.
-        "train_subjects": ["a", "b", "c", "d"],
-        "validation_subjects": ["e"],
-        "test_seen_subjects": ["f"],
-        "test_subjects": ["g", "h", "i"],
+        "subject_split": "subject_independent",
+        "train_subjects": ["a"],
+        "test_subjects": ["b", "c", "d", "e", "f", "g", "h", "i"],
         "loader_kwargs": {
             # HARGPT-style HHAR binary stair setting:
             # phone accelerometer + gyroscope are downsampled to 10 Hz tokens,
@@ -55,13 +67,14 @@ DATASET_REGISTRY = {
         "data_dir": "Dataset/DREAMT",
         "labels": [0, 1],
         "subjects": None,
-        "train_subjects": ["S099"],
-        "test_subjects": ["S100"],
+        "subject_split": "subject_independent",
+        "train_subjects": None,
+        "test_subjects": None,
         "loader_kwargs": {
             "sampling_rate": 64,
             "epoch_seconds": 30.0,
             "stride_seconds": 30.0,
-            "min_epoch_fraction": 0.5,
+            "min_epoch_fraction": 0.8,
         },
     },
 }

@@ -11,15 +11,22 @@ from .feature_description.basic_feature_description import BasicFeatureDescripti
 
 DEFAULT_DATASET_KNOWLEDGE = {
     "WESAD": {
-        "context": "This dataset contains physiological time-series signals for stress or affective-state classification.",
+        "context": (
+            "This dataset contains physiological time-series signals for WESAD binary stress classification. "
+            "In this experiment, no-stress includes baseline, amusement, meditation, and recovery-like segments; "
+            "stress means the dedicated stress-task segment only."
+        ),
         "channel_knowledge": [
             "EDA can reflect sympathetic nervous system arousal.",
             "ECG or BVP-related features can reflect heart-related physiological changes.",
             "Respiration features may change under stress or affective load.",
             "Temperature changes are usually slower and should be interpreted together with other channels.",
             "ACC mainly reflects body movement and can indicate motion artifacts.",
+            "High absolute EDA, SCR, HR/HRV, EMG, or ACC values can also appear in no-stress windows because subjects have different baselines and may move.",
         ],
         "decision_guidance": [
+            "Use the WESAD binary mapping exactly: baseline, amusement, meditation, and recovery-like states are no-stress.",
+            "Do not treat physiological arousal as stress unless the evidence is consistent across multiple channels.",
             "Do not classify the state from one physiological feature alone.",
             "Consider whether movement-related features may affect physiological signals.",
             "Use cross-channel consistency as supporting evidence.",

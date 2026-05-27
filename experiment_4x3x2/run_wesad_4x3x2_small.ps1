@@ -1,3 +1,7 @@
+param(
+    [int]$Concurrency = 1
+)
+
 $ErrorActionPreference = "Stop"
 
 $inputs = @(
@@ -35,6 +39,7 @@ foreach ($inputName in $inputs) {
                 "-output", $outputName,
                 "--labels", "0", "1",
                 "--balanced-per-label", "1",
+                "--concurrency", [string]$Concurrency,
                 "--log-every", "1"
             )
 

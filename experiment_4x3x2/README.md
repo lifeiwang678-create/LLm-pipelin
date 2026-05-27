@@ -4,7 +4,7 @@ This folder is the current official experiment framework. Run experiments from i
 
 ```powershell
 cd experiment_4x3x2
-python main.py -h
+.venv/bin/python main.py -h
 ```
 
 The framework keeps one shared execution path:
@@ -63,6 +63,16 @@ All three datasets are currently configured as binary classification tasks.
 | `DREAMT` | wake | sleep |
 
 Dataset-specific label names are defined in `core/schema.py` and are used in prompts, reports, and confusion matrices.
+
+## Subject-Independent Protocol
+
+The default experiment policy is subject-independent.
+
+- `train_subjects` and `test_subjects` must not overlap.
+- `few_shot` uses only `train_subjects` for in-context examples.
+- `direct` and `multi_agent` do not use training examples, but they still evaluate only on held-out `test_subjects` by default so all LM usages are compared on the same subjects.
+- Dataset defaults live in `Dataset/registry.py`. Override them with `--train-subjects` and `--test-subjects` when needed.
+- Use `--subject-split all` only for debugging or legacy runs where evaluating every available subject is intentional.
 
 ### WESAD Mapping
 
@@ -174,10 +184,29 @@ Phones_gyroscope.csv
 for DREAMT, where the folder contains files such as:
 
 ```text
-S099_whole_df.csv
+data_64Hz/S099_whole_df.csv
 ```
 
 Large local datasets are intentionally not tracked in Git.
+
+## vLLM Shard Settings
+
+On the current `a100` shard environment, use the OpenAI-compatible vLLM server with the maintained model name:
+
+```bash
+vllm serve Qwen/Qwen2.5-7B-Instruct \
+  --served-model-name qwen2.5-7b-instruct \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --dtype bfloat16 \
+  --gpu-memory-utilization 0.50 \
+  --max-model-len 8192 \
+  --max-num-seqs 96 \
+  --max-num-batched-tokens 24576 \
+  --disable-log-requests
+```
+
+The runner supports concurrent client requests with `--concurrency`. The shard benchmark was stable up to server concurrency 96; for full experiments, `--concurrency 64` is the default in the Slurm WESAD scripts to leave some headroom.
 
 ## Dataset Loaders
 
@@ -207,7 +236,7 @@ Large local datasets are intentionally not tracked in Git.
 
 `Dataset/dreamt_loader.py`
 
-- Loads raw 64 Hz DREAMT files such as `S099_whole_df.csv`.
+- Loads raw DREAMT files such as `data_64Hz/S099_whole_df.csv`; DREAMT defaults to 64 Hz for the wearable-only experiment setting.
 - Uses 30-second epochs by default.
 - Maps sleep stages to binary wake/sleep labels.
 
@@ -249,7 +278,7 @@ Large local datasets are intentionally not tracked in Git.
 `few_shot`
 
 - Prompt-level in-context learning.
-- Requires explicit non-overlapping train/test subjects.
+- Uses explicit non-overlapping train/test subjects when provided, otherwise the dataset's subject-independent defaults.
 - The caller provides training examples; the module does not access test samples.
 
 `multi_agent`
@@ -291,19 +320,19 @@ Parser failures are saved as invalid predictions. They are not converted to a fa
 Small WESAD debug run:
 
 ```powershell
-python main.py -dataset WESAD -Input raw_data -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input raw_data -LM direct -output label_only --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
 Small HHAR debug run:
 
 ```powershell
-python main.py -dataset HHAR -Input raw_data -LM direct -output label_only --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset HHAR -Input raw_data -LM direct -output label_only --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --balanced-per-label 1 --log-every 1
 ```
 
 Small DREAMT debug run:
 
 ```powershell
-python main.py -dataset DREAMT -Input feature_description -LM direct -output label_only --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset DREAMT -Input feature_description -LM direct -output label_only --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --balanced-per-label 1 --log-every 1
 ```
 
 Use `--balanced-per-label` only for debug subsets. Formal full-data runs should omit it.
@@ -326,10 +355,14 @@ Processed files are stored in `Processed/`:
 ```text
 Processed/WESAD_binary_windows.pkl
 Processed/HHAR_binary_windows.pkl
-Processed/DREAMT_binary_windows.pkl
+Processed/DREAMT_binary_windows_manifest.json
+Processed/DREAMT_binary_windows_S002.pkl
+Processed/DREAMT_binary_windows_S003.pkl
+...
 ```
 
-Each `.pkl` contains one dataset-level list of window samples. Each sample keeps
+Single-file `.pkl` caches contain one dataset-level list of window samples.
+Subject-shard manifests point to one `.pkl` file per subject. Each sample keeps
 its own `label`, `signals`, and metadata. Labels are for evaluation only; Input
 modules must still avoid writing true labels into prompts.
 
@@ -338,27 +371,35 @@ subject shards can become very large because each `SensorSample` contains full
 signal arrays. Prefer the input-cache workflow below, especially
 `preprocess_inputs.py --from-raw`.
 
-Subject shards are kept only as an emergency/compatibility option:
+For full DREAMT, use subject shards. A single dataset-level DREAMT raw-window
+pickle can exceed memory because each `SensorSample` keeps full 30-second
+64 Hz signal arrays.
+
+Subject-shard examples:
 
 ```text
 Processed/WESAD_binary_windows_manifest.json
 Processed/WESAD_binary_windows_S2.pkl
 Processed/WESAD_binary_windows_S3.pkl
+Processed/DREAMT_binary_windows_manifest.json
+Processed/DREAMT_binary_windows_S002.pkl
+Processed/DREAMT_binary_windows_S003.pkl
 ...
 ```
 
 Examples:
 
 ```powershell
-python preprocess_datasets.py -dataset WESAD --subjects S2 --overwrite
-python preprocess_datasets.py -dataset HHAR --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --overwrite
-python preprocess_datasets.py -dataset DREAMT --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset WESAD --subjects S2 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset HHAR --data-dir "<HHAR_DATA_DIR>" --max-rows 200000 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset DREAMT --data-dir "<DREAMT_DATA_DIR>" --subjects S099 --overwrite
+.venv/bin/python preprocess_datasets.py -dataset DREAMT --shard-by-subject --overwrite
 ```
 
 Then run experiments from the cache:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed --subjects S2 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --use-processed --subjects S2 --balanced-per-label 1 --log-every 1
 ```
 
 Use `--processed-dir` or `--processed-file` if the cache is stored somewhere else.
@@ -366,7 +407,7 @@ Use `--processed-dir` or `--processed-file` if the cache is stored somewhere els
 ## Input Cache
 
 Use `preprocess_inputs.py` to build the second cache layer. It reads
-`Processed/<DATASET>_binary_windows.pkl` or the WESAD subject-shard manifest,
+`Processed/<DATASET>_binary_windows.pkl` or a subject-shard manifest,
 applies one Input module, and saves ready-to-use `LLMSample` objects with
 `input_text`.
 
@@ -380,18 +421,18 @@ the WESAD input caches. Stale cache metadata should not show `stride_sec: 0.25`.
 ```powershell
 Remove-Item .\Processed\WESAD_*_samples.pkl -Force
 Remove-Item .\Processed\WESAD_*_samples.json -Force
-python preprocess_inputs.py -dataset WESAD -Input feature_description --from-raw --overwrite
-python preprocess_inputs.py -dataset WESAD -Input extra_knowledge --from-raw --overwrite
-python preprocess_inputs.py -dataset WESAD -Input encoded_time_series --from-raw --overwrite
-python preprocess_inputs.py -dataset WESAD -Input raw_data --from-raw --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input feature_description --from-raw --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input extra_knowledge --from-raw --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input encoded_time_series --from-raw --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input raw_data --from-raw --overwrite
 ```
 
 Examples:
 
 ```powershell
-python preprocess_inputs.py -dataset WESAD -Input feature_description --subjects S2 --overwrite
-python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 --overwrite
-python preprocess_inputs.py -dataset WESAD -Input feature_description --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input feature_description --subjects S2 --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input all --subjects S2 --overwrite
+.venv/bin/python preprocess_inputs.py -dataset WESAD -Input feature_description --overwrite
 ```
 
 This creates files such as:
@@ -406,7 +447,7 @@ Processed/WESAD_extra_knowledge_samples.pkl
 Then run experiments directly from the input cache:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --train-subjects S2 --test-subjects S3 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --train-subjects S2 --test-subjects S3 --balanced-per-label 1 --log-every 1
 ```
 
 For `extra_knowledge`, the input cache depends on `knowledge_text`,
@@ -474,7 +515,7 @@ python main.py -dataset HHAR -Input raw_data -LM few_shot -output label_only `
 For dataset-size checks without saving samples or calling the LLM:
 
 ```powershell
-python count_dataset_samples.py -dataset WESAD --subjects S2
+.venv/bin/python count_dataset_samples.py -dataset WESAD --subjects S2
 ```
 
 Run commands from the `experiment_4x3x2/` directory so relative dataset paths
@@ -494,24 +535,26 @@ Run without balanced debug sampling:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all_3datasets_4x3x2.ps1 -UseInputCache -FullData -LogEvery 10
 ```
 
-With `-FullData`, direct and multi-agent WESAD runs do not pass a subject filter.
-Few-shot still requires explicit train/test subjects; override them with
-`-WesadFewShotTrainSubjects` and `-WesadFewShotTestSubjects` if needed.
+With `-FullData`, direct and multi-agent runs rely on the default
+subject-independent split from `Dataset/registry.py`, so they evaluate on the
+same held-out test subjects as few-shot. Use `--subject-split all` only for
+legacy all-subject evaluation.
 
 ## Few-Shot Runs
 
-Few-shot runs require explicit train/test subjects.
+Few-shot runs use the dataset's subject-independent defaults unless explicit
+train/test subjects are provided.
 
 WESAD example:
 
 ```powershell
-python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --train-subjects S2 --test-subjects S3 --few-shot-n-per-class 1 --few-shot-example-max-chars 800 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --train-subjects S2 --test-subjects S3 --few-shot-n-per-class 1 --few-shot-example-max-chars 800 --balanced-per-label 1 --log-every 1
 ```
 
 DREAMT example:
 
 ```powershell
-python main.py -dataset DREAMT -Input feature_description -LM few_shot -output label_only --data-dir "<DREAMT_DATA_DIR>" --train-subjects S002 --test-subjects S003 --few-shot-n-per-class 1 --few-shot-example-max-chars 800 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset DREAMT -Input feature_description -LM few_shot -output label_only --data-dir "<DREAMT_DATA_DIR>" --train-subjects S002 --test-subjects S003 --few-shot-n-per-class 1 --few-shot-example-max-chars 800 --balanced-per-label 1 --log-every 1
 ```
 
 HHAR subjects are HHAR user IDs from the CSV, such as `a`, `b`, etc. Use the IDs present in your local file.
@@ -571,7 +614,7 @@ Run `multi_agent` last. It is the slowest path because it makes three LLM calls 
 ## Installation
 
 ```powershell
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
 ```
 
 Core dependencies include:

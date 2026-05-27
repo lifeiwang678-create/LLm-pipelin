@@ -19,6 +19,26 @@ LABEL_NAMES_BY_DATASET = {
     },
 }
 
+LABEL_RULES_BY_DATASET = {
+    "WESAD": [
+        "Label 0 (no stress) includes baseline, amusement, meditation, and recovery-like non-stress segments.",
+        "Label 1 (stress) means the dedicated stress-task segment only.",
+        "High absolute EDA, SCR, heart-rate, HRV, EMG, or ACC values are not sufficient by themselves to predict stress.",
+        "Some no-stress WESAD windows can show physiological arousal, movement, or subject-specific high baselines.",
+        "Prefer label 1 only when multiple channels provide consistent stress evidence that is not better explained by movement, artifacts, or normal subject variation.",
+    ],
+    "HHAR": [
+        "Label 0 is walking downstairs.",
+        "Label 1 is walking upstairs.",
+        "Use temporal acceleration and gyroscope patterns rather than a single large magnitude value.",
+    ],
+    "DREAMT": [
+        "Label 0 is wake.",
+        "Label 1 is sleep, including REM and NREM stages.",
+        "Use the full window context; do not decide from one isolated noisy physiological value.",
+    ],
+}
+
 
 @dataclass
 class SensorSample:
@@ -50,6 +70,13 @@ def label_names_for_dataset(dataset: str | None = None) -> dict[int, str]:
 def label_block(labels: list[int], dataset: str | None = None) -> str:
     names = label_names_for_dataset(dataset)
     return "\n".join(f"- {label} = {names.get(label, str(label))}" for label in labels)
+
+
+def label_rules_block(dataset: str | None = None) -> str:
+    rules = LABEL_RULES_BY_DATASET.get(_normalize_dataset_name(dataset), [])
+    if not rules:
+        return "- Apply the label definitions exactly as written."
+    return "\n".join(f"- {rule}" for rule in rules)
 
 
 def target_names(labels: list[int], dataset: str | None = None) -> list[str]:
