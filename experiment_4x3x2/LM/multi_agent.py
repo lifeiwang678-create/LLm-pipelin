@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import json
+import re
+from collections import Counter
+from typing import Any
+
 from core.schema import Sample, label_block, label_rules_block
 
 
-# multi_agent 前两步 (evidence / candidate_evaluation) 默认输出 token 上限。
-# 旧实现复用 client 全局 max_tokens (128 / 384),会把结构化 JSON 截断成残缺串,
-# 实测会让 encoded_time_series 的 multi_agent 直接 0% 准确率。
+# Intermediate agents usually need more output tokens than the final classifier.
+# If this is too small, JSON outputs from each agent may be truncated.
 DEFAULT_INTERMEDIATE_MAX_TOKENS = 1024
 
 
 class MultiAgentUsage:
-    """Prompt-level 多步推理流水线 (依次 3 次 LLM 调用)。
+    """Prompt-level multi-agent classification.
 
-    注意:名字叫 "multi_agent" 但实质上只是 multi-step prompting:
-    三步用的是同一模型、同一温度、同一 prompt 风格,既没有多模型多样性,
-    也没有 debate/voting。如果要变成真正的 multi-agent,需要至少引入
-    不同模型、或不同温度采样、或最终阶段的投票/辩论机制。
+    This version is different from a simple evidence -> evaluation -> final pipeline.
+    It runs several independent agents with different roles, collects their label votes,
+    and then asks a final judge to make the final decision using both the votes and the
+    original sample.
+
+    It still uses the same llm_client interface as the old implementation:
+    run_agent_pipeline(sample, llm_client) -> str
     """
 
     name = "multi_agent"
@@ -26,31 +33,44 @@ class MultiAgentUsage:
         input_name: str,
         output_instructions: str,
         agents: list[str] | None = None,
-        final_decider: str = "final_decision_agent",
+        final_decider: str = "judge_agent",
         dataset: str | None = None,
         intermediate_max_tokens: int | None = DEFAULT_INTERMEDIATE_MAX_TOKENS,
+        agent_temperatures: dict[str, float] | None = None,
     ) -> None:
         self.labels = labels
         self.input_name = input_name
         self.output_instructions = output_instructions
         self.dataset = dataset
+
+        # Each agent looks at the same sample from a different perspective.
+        # They are intentionally not chained: no agent sees another agent's answer.
         self.agents = agents or [
-            "evidence_extraction_agent",
-            "candidate_evaluation_agent",
+            "signal_pattern_agent",
+            "feature_statistic_agent",
+            "label_rule_agent",
         ]
         self.final_decider = final_decider
-        # 前两步 (evidence / evaluation) 单独设上限。None 表示「按 client 默认」,
-        # 一般不推荐传 None,除非已经把 client max_tokens 调到足够大。
+
         self.intermediate_max_tokens = (
             int(intermediate_max_tokens) if intermediate_max_tokens is not None else None
         )
-        # 把中间步骤的原始输出暂存,由 runner 写到 JSONL 侧文件,
-        # 不再像旧实现那样塞进 sample.meta (会污染 CSV 列、跨样本串台)。
-        self.last_trace: dict | None = None
+
+        # Optional: if llm_client supports temperature as a per-call argument,
+        # this gives agents mild sampling diversity. If not supported, _call_llm
+        # falls back automatically.
+        self.agent_temperatures = agent_temperatures or {
+            "signal_pattern_agent": 0.2,
+            "feature_statistic_agent": 0.4,
+            "label_rule_agent": 0.0,
+        }
+
+        # Runner can write this to a side JSONL file.
+        self.last_trace: dict[str, Any] | None = None
 
     def build_prompt(self, sample: Sample) -> str:
         """Single-call fallback prompt kept for compatibility."""
-        agent_lines = "\n".join(f"- {agent}" for agent in self.agents)
+        agent_lines = "\n".join(f"- {agent}: {self._agent_focus(agent)}" for agent in self.agents)
         return f"""You are coordinating a multi-agent classification discussion for one time-series sample.
 
 Task:
@@ -64,58 +84,76 @@ Dataset-specific label rules:
 
 Agents:
 {agent_lines}
-- {self.final_decider}: compare the agents' conclusions and choose the final label.
+- {self.final_decider}: compare independent agent votes and choose the final label.
 
 Important constraints:
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
 - Do not treat one high absolute sensor value as sufficient evidence for label 1 or the positive class.
-- Keep any reasoning internal unless the selected output format asks for explanation.
 - The final answer must follow the requested JSON schema.
 
+Sample content:
 {sample.input_text}
 
 {self.output_instructions}"""
 
     def run_agent_pipeline(self, sample: Sample, llm_client) -> str:
-        """三步 prompt 流水线。
+        """Run independent agents, aggregate their votes, then call a judge.
 
-        前两步 (evidence_extraction / candidate_evaluation) 要求结构化 JSON 输出,
-        体量大,所以用 self.intermediate_max_tokens 显式放大;最终 decision 步走
-        client 默认 max_tokens,与 direct / few_shot 保持一致。
-
-        返回 final 步的回答,前两步原始输出存到 self.last_trace,由 runner 写到
-        JSONL 侧文件,避免污染主 CSV 表格。
+        Difference from the old version:
+        - old: evidence_agent -> candidate_agent -> final_agent
+        - new: agent_1, agent_2, agent_3 independently inspect the same sample
+        - new: labels are parsed from each agent output and majority vote is recorded
+        - new: judge sees all independent opinions and the majority vote
         """
-        evidence_response = self._call_llm(
-            llm_client,
-            self.build_evidence_prompt(sample),
-            max_tokens=self.intermediate_max_tokens,
-        )
-        evaluation_response = self._call_llm(
-            llm_client,
-            self.build_candidate_evaluation_prompt(sample, evidence_response),
-            max_tokens=self.intermediate_max_tokens,
-        )
+        agent_outputs: list[dict[str, Any]] = []
+
+        for agent_name in self.agents:
+            response = self._call_llm(
+                llm_client,
+                self.build_agent_prompt(sample, agent_name),
+                max_tokens=self.intermediate_max_tokens,
+                temperature=self.agent_temperatures.get(agent_name),
+            )
+            vote = self._extract_label_vote(response)
+            agent_outputs.append(
+                {
+                    "agent": agent_name,
+                    "vote": vote,
+                    "response": response,
+                }
+            )
+
+        majority_vote = self._majority_vote([item["vote"] for item in agent_outputs])
+
         final_response = self._call_llm(
             llm_client,
-            self.build_final_decision_prompt(sample, evidence_response, evaluation_response),
+            self.build_judge_prompt(sample, agent_outputs, majority_vote),
         )
+
         self.last_trace = {
-            "evidence_extraction": evidence_response,
-            "candidate_evaluation": evaluation_response,
+            "mode": "independent_agents_with_judge",
+            "agent_outputs": agent_outputs,
+            "majority_vote": majority_vote,
+            "final_response": final_response,
         }
         return final_response
 
-    def build_evidence_prompt(self, sample: Sample) -> str:
-        return f"""You are given one time-series sample for classification.
+    def build_agent_prompt(self, sample: Sample, agent_name: str) -> str:
+        agent_focus = self._agent_focus(agent_name)
+        label_values = ", ".join(str(label) for label in self.labels)
 
-Agent role:
-Evidence Extraction Agent.
+        return f"""You are one independent agent in a multi-agent classification system.
+
+Agent name:
+{agent_name}
+
+Agent focus:
+{agent_focus}
 
 Task:
-Extract relevant evidence for time-series classification.
+Classify the current time-series sample from your assigned perspective.
 
 Selected input representation:
 {self.input_name}
@@ -126,23 +164,15 @@ Labels:
 Dataset-specific label rules:
 {label_rules_block(self.dataset)}
 
-Allowed evidence sources:
-- raw signal values
-- statistical features
-- temporal patterns
-- dataset context
-- dataset/channel knowledge
-- external knowledge if included in the prompt
-- retrieved evidence if included in the prompt
-
 Constraints:
+- Work independently. Do not assume other agents' conclusions.
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
 - Do not invent sensor values, features, labels, or retrieved examples.
-- Current sample features are primary evidence.
-- Dataset knowledge is supporting context only.
-- Extract evidence for both allowed labels, including evidence against label 1 or the positive class.
-- Treat high absolute sensor values cautiously when subject-specific baseline may differ.
+- Apply the dataset-specific label rules exactly.
+- Consider both positive and negative evidence.
+- Do not rely on one isolated high absolute sensor value.
+- If evidence is weak, lower confidence rather than forcing strong certainty.
 - Output JSON only.
 
 Sample content:
@@ -150,83 +180,45 @@ Sample content:
 
 Required JSON output:
 {{
-  "key_evidence": [
-    {{
-      "evidence": "...",
-      "source": "current_sample | dataset_knowledge | external_knowledge | retrieved_evidence",
-      "relevance": "..."
-    }}
+  "agent": "{agent_name}",
+  "predicted_label": <one of: {label_values}>,
+  "confidence": "high | medium | low",
+  "supporting_evidence": [
+    "..."
+  ],
+  "contradicting_or_weak_evidence": [
+    "..."
   ],
   "uncertainties": [
     "..."
   ]
 }}"""
 
-    def build_candidate_evaluation_prompt(self, sample: Sample, evidence_response: str) -> str:
-        return f"""You are given one time-series sample for classification.
-
-Agent role:
-Candidate Evaluation Agent.
-
-Task:
-Evaluate each allowed label using the extracted evidence.
-
-Labels:
-{label_block(self.labels, self.dataset)}
-
-Dataset-specific label rules:
-{label_rules_block(self.dataset)}
-
-Constraints:
-- Consider only labels from the allowed label set.
-- Do not invent new labels.
-- Do not rely on one isolated feature alone.
-- Down-weight weakly supported labels.
-- If evidence is insufficient, state uncertainty.
-- Use only the information provided in this prompt.
-- Do not use knowledge outside the provided prompt.
-- Apply the dataset-specific label rules exactly.
-- Evaluate whether apparent label-1 evidence may also be compatible with label 0, movement, artifacts, or subject variation.
-- Output JSON only.
-
-Sample content:
-{sample.input_text}
-
-Agent 1 evidence response:
-{evidence_response}
-
-Required JSON output:
-{{
-  "label_evaluations": [
-    {{
-      "label": "<allowed label>",
-      "supporting_evidence": ["..."],
-      "contradicting_or_weak_evidence": ["..."],
-      "assessment": "strong | moderate | weak | unclear"
-    }}
-  ],
-  "candidate_ranking": [
-    "<label1>",
-    "<label2>"
-  ],
-  "remaining_uncertainties": [
-    "..."
-  ]
-}}"""
-
-    def build_final_decision_prompt(
+    def build_judge_prompt(
         self,
         sample: Sample,
-        evidence_response: str,
-        evaluation_response: str,
+        agent_outputs: list[dict[str, Any]],
+        majority_vote: int | None,
     ) -> str:
-        return f"""You are given one time-series sample for classification.
+        compact_outputs = [
+            {
+                "agent": item["agent"],
+                "vote": item["vote"],
+                "response": item["response"],
+            }
+            for item in agent_outputs
+        ]
+        agent_outputs_text = json.dumps(compact_outputs, ensure_ascii=False, indent=2)
+        majority_text = "unknown" if majority_vote is None else str(majority_vote)
 
-Agent role:
-Final Decision Agent.
+        return f"""You are the final judge in a multi-agent classification system.
 
 Task:
-Choose the final label for the sample using the provided sample content and previous agent outputs.
+Choose the final label for the current sample by comparing:
+- the original sample content
+- independent agent predictions
+- supporting and contradicting evidence from each agent
+- the majority vote
 
 Labels:
 {label_block(self.labels, self.dataset)}
@@ -242,34 +234,141 @@ Critical constraints:
 - Consider only labels from the allowed label set.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
+- The majority vote is useful evidence, but it is not automatically correct.
+- Override the majority vote only when the sample content and label rules support the override.
 - Do not default to label 1 or the positive class because a single sensor feature is high.
-- Predict only the final label for the current sample.
 
 Sample content:
 {sample.input_text}
 
-Agent 1 evidence response:
-{evidence_response}
+Independent agent outputs:
+{agent_outputs_text}
 
-Agent 2 candidate evaluation response:
-{evaluation_response}
+Parsed majority vote:
+{majority_text}
 
 {self.output_instructions}"""
 
-    def _call_llm(self, llm_client, prompt: str, max_tokens: int | None = None) -> str:
-        # 优先尝试给 client 传 per-call max_tokens (OpenAICompatibleClient 支持)。
-        # 如果用户接了一个旧版/第三方 client 不支持该关键字,降级为不带覆盖再调一次,
-        # 保证 multi_agent 仍然可用 (代价是中间步骤可能被截断,届时去看 last_trace 排查)。
+    def _agent_focus(self, agent_name: str) -> str:
+        focuses = {
+            "signal_pattern_agent": (
+                "Inspect temporal or raw signal patterns. Pay attention to trends, bursts, "
+                "movement-like patterns, artifacts, and whether the signal pattern is stable."
+            ),
+            "feature_statistic_agent": (
+                "Inspect statistical feature summaries. Compare mean, standard deviation, range, "
+                "frequency-domain features, and cross-channel consistency if available."
+            ),
+            "label_rule_agent": (
+                "Apply the dataset-specific label definition strictly. Check whether the evidence "
+                "matches the actual target label rather than a general medical or intuitive meaning."
+            ),
+            "consistency_agent": (
+                "Check whether different channels and features support the same label or conflict "
+                "with each other. Penalize decisions based on a single weak cue."
+            ),
+        }
+        return focuses.get(
+            agent_name,
+            "Analyze the sample independently and produce a label prediction with evidence.",
+        )
+
+    def _extract_label_vote(self, response: str) -> int | None:
+        """Extract predicted_label from an agent JSON response.
+
+        Returns None if the output is invalid or the label is outside the allowed set.
+        This keeps invalid intermediate agent outputs visible in last_trace without crashing
+        the whole experiment.
+        """
+        label_set = set(self.labels)
+
+        try:
+            data = json.loads(response)
+            value = data.get("predicted_label")
+            label = self._coerce_label(value)
+            return label if label in label_set else None
+        except Exception:
+            pass
+
+        # Fallback for slightly malformed JSON.
+        patterns = [
+            r'"predicted_label"\s*:\s*"?(-?\d+)"?',
+            r"predicted_label\s*[:=]\s*" + r'"?(-?\d+)"?',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, response)
+            if match:
+                label = self._coerce_label(match.group(1))
+                return label if label in label_set else None
+
+        return None
+
+    def _coerce_label(self, value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if re.fullmatch(r"-?\d+", value):
+                return int(value)
+        return None
+
+    def _majority_vote(self, votes: list[int | None]) -> int | None:
+        valid_votes = [vote for vote in votes if vote in set(self.labels)]
+        if not valid_votes:
+            return None
+
+        counts = Counter(valid_votes)
+        top_count = max(counts.values())
+        winners = [label for label, count in counts.items() if count == top_count]
+
+        # Tie: no majority. The judge must decide from evidence.
+        if len(winners) != 1:
+            return None
+        return winners[0]
+
+    def _call_llm(
+        self,
+        llm_client,
+        prompt: str,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        """Call different LLM client implementations safely.
+
+        Supports clients with complete(prompt), complete(prompt, max_tokens=...),
+        complete(prompt, temperature=...), or complete(prompt, max_tokens=..., temperature=...).
+        Falls back if a client does not support optional per-call arguments.
+        """
         if hasattr(llm_client, "complete"):
+            kwargs: dict[str, Any] = {}
             if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+
+            if kwargs:
                 try:
-                    return llm_client.complete(prompt, max_tokens=max_tokens)
+                    return llm_client.complete(prompt, **kwargs)
                 except TypeError:
+                    # Try max_tokens only because the existing client may support this
+                    # but not temperature.
+                    if max_tokens is not None:
+                        try:
+                            return llm_client.complete(prompt, max_tokens=max_tokens)
+                        except TypeError:
+                            pass
                     return llm_client.complete(prompt)
             return llm_client.complete(prompt)
+
         if hasattr(llm_client, "generate"):
             return llm_client.generate(prompt)
+
         raise TypeError("LLM client must provide complete(prompt) or generate(prompt).")
 
 
 __all__ = ["MultiAgentUsage"]
+

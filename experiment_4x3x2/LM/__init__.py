@@ -31,18 +31,38 @@ def build_lm_usage(
         )
 
     if kind == "few_shot":
+        example_selection = config.get("example_selection", "class_balanced")
+        normalized_selection = str(example_selection or "class_balanced").strip().lower().replace("-", "_")
+        n_per_class = config.get("n_per_class")
+        examples_per_subject_per_label = config.get("examples_per_subject_per_label")
+        if normalized_selection in {"leave_one_subject_out", "loo", "subject_loo"}:
+            if n_per_class is not None and examples_per_subject_per_label is not None:
+                if int(n_per_class) != int(examples_per_subject_per_label):
+                    raise ValueError(
+                        "few_shot n_per_class is only used by class_balanced sampling. "
+                        "For leave_one_subject_out, set examples_per_subject_per_label "
+                        "instead, or remove n_per_class."
+                    )
+            if examples_per_subject_per_label is None:
+                examples_per_subject_per_label = n_per_class if n_per_class is not None else 1
+            n_per_class = 2
+        else:
+            n_per_class = 2 if n_per_class is None else n_per_class
+            examples_per_subject_per_label = (
+                1 if examples_per_subject_per_label is None else examples_per_subject_per_label
+            )
         return FewShotUsage(
             labels=labels,
             input_name=input_name,
             output_instructions=output_instructions,
             examples=train_samples,
-            n_per_class=int(config.get("n_per_class", 2)),
+            n_per_class=int(n_per_class),
             random_state=int(config.get("random_state", 42)),
             example_max_chars=config.get("example_max_chars"),
             dataset=dataset,
-            example_selection=config.get("example_selection", "class_balanced"),
+            example_selection=example_selection,
             example_subjects=int(config.get("example_subjects") or 3),
-            examples_per_subject_per_label=int(config.get("examples_per_subject_per_label") or 1),
+            examples_per_subject_per_label=int(examples_per_subject_per_label),
             exclude_eval_subject=bool(config.get("exclude_eval_subject", True)),
         )
 

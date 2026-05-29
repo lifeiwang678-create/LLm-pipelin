@@ -7,6 +7,7 @@ from argparse import Namespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from Evaluation import label_distribution, limit_samples, summarize_and_save
 from Dataset import build_dataset_loader, get_dataset_config
@@ -49,6 +50,7 @@ def build_experiment_config(args: Namespace) -> dict:
                 "For few_shot, use --train-subjects/--test-subjects or rely on "
                 "the dataset's subject-independent defaults."
             )
+    few_shot_example_selection = getattr(args, "few_shot_example_selection", "leave_one_subject_out")
     data_cfg = {
         "subjects": args.subjects if args.subjects is not None else dataset_cfg.get("subjects"),
         "train_subjects": (
@@ -111,15 +113,14 @@ def build_experiment_config(args: Namespace) -> dict:
         "input": input_config,
         "lm_usage": {
             "type": args.LM,
-            # 旧实现写的是 `args.few_shot_n_per_class or default`,这样用户传 0 会被吞掉。
-            # 改成显式 None 判断,让 0 可以原样传递给下游 (虽然 FewShotUsage 仍会拒绝 <1)。
             "n_per_class": (
                 args.few_shot_n_per_class
                 if args.few_shot_n_per_class is not None
-                else default_few_shot_n
+                or few_shot_example_selection != "leave_one_subject_out"
+                else None
             ),
             "random_state": 42,
-            "example_selection": getattr(args, "few_shot_example_selection", "leave_one_subject_out"),
+            "example_selection": few_shot_example_selection,
             "example_subjects": int(getattr(args, "few_shot_example_subjects", 3) or 3),
             "examples_per_subject_per_label": int(
                 getattr(args, "few_shot_examples_per_subject_per_label", 1) or 1
@@ -169,6 +170,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     input_provider = build_input_provider(input_config)
     output_handler = build_output_handler(config["output"], labels)
     usage_type = _normalize_lm_usage_type(config["lm_usage"].get("type", "direct"))
+    _validate_subject_config_semantics(config, usage_type)
 
     train_subjects, test_subjects = _resolve_run_subjects(config, dataset_loader, usage_type)
     fewshot_leave_one_out = _fewshot_uses_leave_one_subject_out(config, usage_type)
@@ -226,16 +228,11 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     sampled_distribution = label_distribution(eval_sensor_samples)
     print(f"Label distribution after sampling: {sampled_distribution}")
     if eval_cfg.get("balanced_per_label") is not None:
-        expected = int(eval_cfg["balanced_per_label"])
-        short = {
-            label: sampled_distribution.get(label, 0)
-            for label in labels
-            if sampled_distribution.get(label, 0) != expected
-        }
-        if short:
-            raise RuntimeError(
-                f"Balanced debug subset failed. Expected {expected} samples per label, got {short}."
-            )
+        _validate_balanced_per_label_counts(
+            sampled_distribution,
+            labels=labels,
+            expected=int(eval_cfg["balanced_per_label"]),
+        )
     if config["data"].get("use_input_cache"):
         eval_samples = eval_sensor_samples
     else:
@@ -307,7 +304,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         dataset=dataset_loader.name,
         output_handler=output_handler,
         usage_type=usage_type,
-        shared_lm_usage=lm_usage if not hasattr(lm_usage, "run_agent_pipeline") else None,
+        shared_lm_usage=lm_usage if _can_share_lm_usage(usage_type, lm_usage) else None,
         sample_meta_safe_keys=sample_meta_safe_keys,
         trace_path=trace_path,
         concurrency=concurrency,
@@ -373,6 +370,63 @@ def _fewshot_uses_leave_one_subject_out(config: dict, usage_type: str | None = N
         return False
     selection = str((config.get("lm_usage") or {}).get("example_selection", "class_balanced"))
     return selection.strip().lower().replace("-", "_") in {"leave_one_subject_out", "loo", "subject_loo"}
+
+
+def _can_share_lm_usage(usage_type: str, lm_usage) -> bool:
+    if hasattr(lm_usage, "run_agent_pipeline"):
+        return False
+    # FewShotUsage keeps per-sample metadata for auditing. Rebuild it per worker
+    # so concurrent samples cannot race on last_example_subjects/last_example_count.
+    return usage_type != "few_shot"
+
+
+def _validate_subject_config_semantics(config: dict, usage_type: str) -> None:
+    if usage_type != "few_shot":
+        return
+
+    data_config = config.get("data") or {}
+    subjects = normalize_subjects(data_config.get("subjects"))
+    train_subjects = normalize_subjects(data_config.get("train_subjects"))
+    test_subjects = normalize_subjects(data_config.get("test_subjects"))
+    has_explicit_split = bool(train_subjects or test_subjects)
+    if subjects and not has_explicit_split:
+        raise ValueError(
+            "For few_shot runs, data.subjects/--subjects is ambiguous. "
+            "Use data.train_subjects/--train-subjects for example-source subjects "
+            "and data.test_subjects/--test-subjects for evaluation subjects. "
+            "For leave_one_subject_out, test_subjects selects evaluation subjects; "
+            "examples are sampled from non-evaluation subjects."
+        )
+
+
+def _validate_balanced_per_label_counts(
+    distribution: dict[int, int],
+    *,
+    labels: list[int],
+    expected: int,
+) -> None:
+    too_few = {
+        int(label): int(distribution.get(label, 0))
+        for label in labels
+        if int(distribution.get(label, 0)) < expected
+    }
+    too_many = {
+        int(label): int(distribution.get(label, 0))
+        for label in labels
+        if int(distribution.get(label, 0)) > expected
+    }
+    if not too_few and not too_many:
+        return
+
+    details = []
+    if too_few:
+        details.append(f"insufficient samples {too_few}")
+    if too_many:
+        details.append(f"too many samples {too_many}")
+    raise RuntimeError(
+        "Balanced debug subset failed. "
+        f"Expected exactly {expected} samples per label; " + "; ".join(details) + "."
+    )
 
 
 def _resolve_run_subjects(config: dict, dataset_loader, usage_type: str) -> tuple[list[str] | None, list[str] | None]:
@@ -546,15 +600,17 @@ def _run_eval_samples(
             for idx, sample in enumerate(eval_samples, 1)
         }
         completed = 0
+        failures: list[tuple[int, BaseException]] = []
         for future in as_completed(futures):
             idx = futures[future]
             try:
                 result = future.result()
             except Exception as exc:
-                for pending in futures:
-                    if pending is not future:
-                        pending.cancel()
-                raise RuntimeError(f"Evaluation failed at sample {idx}/{total}.") from exc
+                failures.append((idx, exc))
+                completed += 1
+                if completed % log_every == 0 or completed == total:
+                    print(f"{completed}/{total} done")
+                continue
 
             records_by_index[idx - 1] = result["record"]
             if result["trace_record"]:
@@ -564,6 +620,18 @@ def _run_eval_samples(
             completed += 1
             if completed % log_every == 0 or completed == total:
                 print(f"{completed}/{total} done")
+
+    if failures:
+        failures.sort(key=lambda item: item[0])
+        detail = "; ".join(
+            f"sample {idx}/{total}: {type(exc).__name__}: {exc}"
+            for idx, exc in failures[:10]
+        )
+        if len(failures) > 10:
+            detail += f"; ... {len(failures) - 10} more failures"
+        raise RuntimeError(
+            f"Evaluation failed for {len(failures)} sample(s). {detail}"
+        ) from failures[0][1]
 
     missing = [idx for idx, record in enumerate(records_by_index, 1) if record is None]
     if missing:
@@ -815,17 +883,8 @@ def _validate_cache_metadata(
                 f"Expected {expected_input_type}, found {actual_input_type}."
             )
 
-    source_metadata = metadata.get("source_processed_metadata")
-    if not isinstance(source_metadata, dict):
-        subset_metadata = metadata.get("source_data_subset_metadata")
-        if isinstance(subset_metadata, dict):
-            source_metadata = subset_metadata.get("source_processed_metadata")
-    if isinstance(source_metadata, dict):
-        loader_metadata = source_metadata
-    else:
-        loader_metadata = metadata
-
     expected_kwargs = dict(config.get("dataset", {}).get("loader_kwargs") or {})
+    loader_metadata = _cache_loader_metadata(metadata)
     actual_kwargs = dict(loader_metadata.get("loader_kwargs") or {})
     mismatches = _loader_kwarg_mismatches(expected_dataset, expected_kwargs, actual_kwargs)
     if mismatches:
@@ -838,6 +897,20 @@ def _validate_cache_metadata(
             "Delete/rebuild the cache with preprocess_datasets.py and preprocess_inputs.py, "
             "or run without --use-processed/--use-input-cache."
         )
+
+
+def _cache_loader_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return the metadata layer that owns dataset loader kwargs."""
+    subset_metadata = metadata.get("source_data_subset_metadata")
+    candidates = [
+        metadata.get("source_processed_metadata"),
+        subset_metadata.get("source_processed_metadata") if isinstance(subset_metadata, dict) else None,
+        metadata,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and isinstance(candidate.get("loader_kwargs"), dict):
+            return candidate
+    return metadata
 
 
 def _loader_kwarg_mismatches(

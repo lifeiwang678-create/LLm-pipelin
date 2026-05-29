@@ -69,7 +69,9 @@ Dataset-specific label names are defined in `core/schema.py` and are used in pro
 The default experiment policy is subject-independent.
 
 - `train_subjects` and `test_subjects` must not overlap.
-- `few_shot` uses only `train_subjects` for in-context examples.
+- `few_shot` with `class_balanced` uses `train_subjects` for in-context examples.
+- `few_shot` with `leave_one_subject_out` evaluates `test_subjects` and samples examples from non-evaluation subjects; use `examples_per_subject_per_label`, not `n_per_class`, to control per-subject examples.
+- Do not use `subjects` as a shorthand for few-shot runs; use `train_subjects` and `test_subjects` so example-source and evaluation subjects are explicit.
 - `direct` and `multi_agent` do not use training examples, but they still evaluate only on held-out `test_subjects` by default so all LM usages are compared on the same subjects.
 - Dataset defaults live in `Dataset/registry.py`. Override them with `--train-subjects` and `--test-subjects` when needed.
 - Use `--subject-split all` only for debugging or legacy runs where evaluating every available subject is intentional.

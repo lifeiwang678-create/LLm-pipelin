@@ -119,6 +119,10 @@ sample, the current subject is excluded from examples, then 5 other subjects are
 sampled with 1 example per subject per label using seed 42. Legacy
 `class_balanced` few-shot still requires disjoint `data.train_subjects` and
 `data.test_subjects`; overlapping subjects are rejected.
+For few-shot runs, use `train_subjects` for class-balanced example sources and
+`test_subjects` for evaluation subjects. Do not use `subjects` as a shorthand:
+it is ambiguous in few-shot mode. In `leave_one_subject_out`, set
+`examples_per_subject_per_label`; `n_per_class` belongs to `class_balanced`.
 
 Example few-shot config data block:
 
@@ -130,7 +134,6 @@ Example few-shot config data block:
   },
 	  "lm_usage": {
 	    "type": "few_shot",
-	    "n_per_class": 2,
 	    "random_state": 42,
 	    "example_selection": "leave_one_subject_out",
 	    "example_subjects": 3,
