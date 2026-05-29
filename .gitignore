@@ -64,6 +64,7 @@ vicuna-7b-v1.5/
 *.pt
 *.pth
 *.zip
+*.tar.gz
 *.crdownload
 
 # Figures and temporary analysis artifacts

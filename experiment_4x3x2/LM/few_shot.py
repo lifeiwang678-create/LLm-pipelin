@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import random
 import re
 from collections import defaultdict
 
@@ -23,7 +22,7 @@ class FewShotUsage:
         example_max_chars: int | None = None,
         dataset: str | None = None,
         example_selection: str = "class_balanced",
-        example_subjects: int = 5,
+        example_subjects: int = 3,
         examples_per_subject_per_label: int = 1,
         exclude_eval_subject: bool = True,
     ) -> None:
@@ -56,7 +55,6 @@ class FewShotUsage:
         if n_per_class < 1:
             raise ValueError("few_shot n_per_class must be at least 1.")
 
-        rng = random.Random(random_state)
         picked = []
         for label in self.labels:
             class_examples = [sample for sample in examples if sample.label == label]
@@ -66,14 +64,24 @@ class FewShotUsage:
                     f"{label}: required {n_per_class}, got {len(class_examples)}. "
                     "Use more training subjects, reduce n_per_class, or adjust the label set."
                 )
-            rng.shuffle(class_examples)
+            class_examples = _stable_sample_order(
+                class_examples,
+                random_state,
+                "class-balanced",
+                int(label),
+            )
             picked.extend(class_examples[:n_per_class])
-        rng.shuffle(picked)
-        return picked
+        return _stable_sample_order(picked, random_state, "class-balanced-output")
 
     def build_prompt(self, sample: Sample) -> str:
         # This is prompt-level few-shot in-context learning, not fine-tuning or prompt tuning.
-        examples = self._examples_for_sample(sample)
+        prompt, subjects, count = self.build_prompt_with_metadata(sample)
+        self.last_example_subjects = subjects
+        self.last_example_count = count
+        return prompt
+
+    def build_prompt_with_metadata(self, sample: Sample) -> tuple[str, list[str], int]:
+        examples, subjects = self._examples_for_sample(sample)
         example_blocks = []
         for idx, example in enumerate(examples, 1):
             example_blocks.append(
@@ -84,7 +92,7 @@ Correct answer JSON:
 {self._format_example_answer(example.label)}"""
             )
 
-        return f"""You are given time-series samples for classification.
+        prompt = f"""You are given time-series samples for classification.
 
 Task:
 Classify the state of the final sample using the selected input representation: {self.input_name}.
@@ -114,12 +122,12 @@ Now classify the following final sample.
 {sample.input_text}
 
 {self.output_instructions}"""
+        return prompt, subjects, len(examples)
 
-    def _examples_for_sample(self, sample: Sample) -> list[Sample]:
+    def _examples_for_sample(self, sample: Sample) -> tuple[list[Sample], list[str]]:
         if self.example_selection != "leave_one_subject_out":
-            self.last_example_subjects = sorted({str(example.subject) for example in self.examples})
-            self.last_example_count = len(self.examples)
-            return self.examples
+            subjects = sorted({str(example.subject) for example in self.examples})
+            return self.examples, subjects
 
         eval_subject = str(getattr(sample, "subject", ""))
         candidate_subjects = []
@@ -140,22 +148,32 @@ Now classify the following final sample.
                 "more subjects or reduce --few-shot-example-subjects."
             )
 
-        rng = random.Random(_stable_subject_seed(self.random_state, eval_subject))
-        shuffled_subjects = list(candidate_subjects)
-        rng.shuffle(shuffled_subjects)
-        selected_subjects = shuffled_subjects[: self.example_subjects]
+        ranked_subjects = sorted(
+            candidate_subjects,
+            key=lambda subject: _stable_digest(
+                self.random_state,
+                "few-shot-subject",
+                eval_subject,
+                subject,
+            ),
+        )
+        selected_subjects = ranked_subjects[: self.example_subjects]
 
         picked = []
         for subject in selected_subjects:
             by_label = self._examples_by_subject_label[subject]
             for label in self.labels:
                 examples = list(by_label[int(label)])
-                rng.shuffle(examples)
+                examples = _stable_sample_order(
+                    examples,
+                    self.random_state,
+                    "few-shot-sample",
+                    eval_subject,
+                    subject,
+                    int(label),
+                )
                 picked.extend(examples[: self.examples_per_subject_per_label])
-        rng.shuffle(picked)
-        self.last_example_subjects = list(selected_subjects)
-        self.last_example_count = len(picked)
-        return picked
+        return picked, list(selected_subjects)
 
     def _group_by_subject_label(self, examples: list[Sample]) -> dict[str, dict[int, list[Sample]]]:
         groups: dict[str, dict[int, list[Sample]]] = defaultdict(lambda: defaultdict(list))
@@ -195,9 +213,39 @@ def _normalize_example_selection(value: str | None) -> str:
     )
 
 
-def _stable_subject_seed(random_state: int, subject: str) -> int:
-    payload = f"{int(random_state)}:{subject}".encode("utf-8")
-    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+def _stable_digest(random_state: int, *parts: object) -> str:
+    payload = ":".join(
+        [str(int(random_state)), *(str(part) for part in parts)]
+    ).encode("utf-8")
+
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _stable_sample_order(samples: list[Sample], random_state: int, *parts: object) -> list[Sample]:
+    return sorted(
+        samples,
+        key=lambda sample: _stable_digest(
+            random_state,
+            *parts,
+            _sample_fingerprint(sample),
+        ),
+    )
+
+
+def _sample_fingerprint(sample: Sample) -> str:
+    meta = dict(getattr(sample, "meta", {}) or {})
+    parts = {
+        "dataset": getattr(sample, "dataset", ""),
+        "subject": str(getattr(sample, "subject", "")),
+        "label": int(getattr(sample, "label")),
+        "input_sha256": hashlib.sha256(
+            str(getattr(sample, "input_text", "")).encode("utf-8")
+        ).hexdigest(),
+    }
+    for key in ("sample_id", "data_index", "epoch_id", "local_index"):
+        if key in meta:
+            parts[key] = meta[key]
+    return json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _subject_sort_key(subject: str) -> list[object]:

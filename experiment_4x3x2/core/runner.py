@@ -120,7 +120,7 @@ def build_experiment_config(args: Namespace) -> dict:
             ),
             "random_state": 42,
             "example_selection": getattr(args, "few_shot_example_selection", "leave_one_subject_out"),
-            "example_subjects": int(getattr(args, "few_shot_example_subjects", 5) or 5),
+            "example_subjects": int(getattr(args, "few_shot_example_subjects", 3) or 3),
             "examples_per_subject_per_label": int(
                 getattr(args, "few_shot_examples_per_subject_per_label", 1) or 1
             ),
@@ -180,7 +180,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         lm_cfg = config.get("lm_usage") or {}
         print(
             "Few-shot example policy: leave_one_subject_out "
-            f"(subjects={int(lm_cfg.get('example_subjects', 5))}, "
+            f"(subjects={int(lm_cfg.get('example_subjects', 3))}, "
             f"per_subject_per_label={int(lm_cfg.get('examples_per_subject_per_label', 1))}, "
             f"seed={int(lm_cfg.get('random_state', 42))})"
         )
@@ -307,6 +307,7 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         dataset=dataset_loader.name,
         output_handler=output_handler,
         usage_type=usage_type,
+        shared_lm_usage=lm_usage if not hasattr(lm_usage, "run_agent_pipeline") else None,
         sample_meta_safe_keys=sample_meta_safe_keys,
         trace_path=trace_path,
         concurrency=concurrency,
@@ -483,6 +484,7 @@ def _run_eval_samples(
     dataset: str,
     output_handler,
     usage_type: str,
+    shared_lm_usage,
     sample_meta_safe_keys: set[str],
     trace_path: Path,
     concurrency: int,
@@ -509,6 +511,7 @@ def _run_eval_samples(
                 dataset=dataset,
                 output_handler=output_handler,
                 usage_type=usage_type,
+                shared_lm_usage=shared_lm_usage,
                 sample_meta_safe_keys=sample_meta_safe_keys,
             )
             records_by_index[idx - 1] = result["record"]
@@ -537,6 +540,7 @@ def _run_eval_samples(
                 dataset=dataset,
                 output_handler=output_handler,
                 usage_type=usage_type,
+                shared_lm_usage=shared_lm_usage,
                 sample_meta_safe_keys=sample_meta_safe_keys,
             ): idx
             for idx, sample in enumerate(eval_samples, 1)
@@ -580,16 +584,19 @@ def _run_one_sample(
     output_handler,
     usage_type: str,
     sample_meta_safe_keys: set[str],
+    shared_lm_usage=None,
 ) -> dict:
     client = OpenAICompatibleClient(**config["lm_client"])
-    lm_usage = build_lm_usage(
-        config["lm_usage"],
-        labels=labels,
-        input_name=input_name,
-        train_samples=train_samples,
-        output_instructions=output_instructions,
-        dataset=dataset,
-    )
+    lm_usage = shared_lm_usage
+    if lm_usage is None:
+        lm_usage = build_lm_usage(
+            config["lm_usage"],
+            labels=labels,
+            input_name=input_name,
+            train_samples=train_samples,
+            output_instructions=output_instructions,
+            dataset=dataset,
+        )
 
     usage_start = len(getattr(client, "usage_records", []))
     few_shot_example_subjects = None
@@ -597,10 +604,13 @@ def _run_one_sample(
     if hasattr(lm_usage, "run_agent_pipeline"):
         raw_response = lm_usage.run_agent_pipeline(sample, client)
     else:
-        prompt = lm_usage.build_prompt(sample)
-        if hasattr(lm_usage, "last_example_subjects"):
-            few_shot_example_subjects = list(getattr(lm_usage, "last_example_subjects", []) or [])
-            few_shot_example_count = int(getattr(lm_usage, "last_example_count", 0) or 0)
+        if hasattr(lm_usage, "build_prompt_with_metadata"):
+            prompt, few_shot_example_subjects, few_shot_example_count = lm_usage.build_prompt_with_metadata(sample)
+        else:
+            prompt = lm_usage.build_prompt(sample)
+            if hasattr(lm_usage, "last_example_subjects"):
+                few_shot_example_subjects = list(getattr(lm_usage, "last_example_subjects", []) or [])
+                few_shot_example_count = int(getattr(lm_usage, "last_example_count", 0) or 0)
         raw_response = client.complete(prompt)
 
     llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
@@ -806,6 +816,10 @@ def _validate_cache_metadata(
             )
 
     source_metadata = metadata.get("source_processed_metadata")
+    if not isinstance(source_metadata, dict):
+        subset_metadata = metadata.get("source_data_subset_metadata")
+        if isinstance(subset_metadata, dict):
+            source_metadata = subset_metadata.get("source_processed_metadata")
     if isinstance(source_metadata, dict):
         loader_metadata = source_metadata
     else:

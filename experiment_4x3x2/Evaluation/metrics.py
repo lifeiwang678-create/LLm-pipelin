@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import random
+import hashlib
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -31,21 +31,29 @@ def limit_samples(
         # 录音早期的窗口(WESAD 永远是早期 baseline + 早期 stress)。
         # 改为按 label 分组后用固定种子随机洗牌再截前 N 个,既避免选择偏差,
         # 又通过 random_state 保证可复现。 =====
-        rng = random.Random(random_state if random_state is not None else 42)
         groups: dict[int, list] = {}
         for sample in samples:
             groups.setdefault(sample.label, []).append(sample)
         balanced: list = []
         for label in sorted(groups):
-            label_samples = list(groups[label])
-            rng.shuffle(label_samples)
+            label_samples = _stable_sample_order(
+                groups[label],
+                random_state if random_state is not None else 42,
+                "balanced-per-label",
+                int(label),
+            )
             balanced.extend(label_samples[:balanced_per_label])
         samples = balanced
 
     if per_subject_limit is not None:
         counts: dict[str, int] = {}
         limited = []
-        for sample in samples:
+        ordered = _stable_sample_order(
+            samples,
+            random_state if random_state is not None else 42,
+            "per-subject-limit",
+        )
+        for sample in ordered:
             count = counts.get(sample.subject, 0)
             if count >= per_subject_limit:
                 continue
@@ -56,6 +64,50 @@ def limit_samples(
     if limit is not None:
         samples = samples[:limit]
     return samples
+
+
+def _stable_sample_order(samples: list[Sample], random_state: int, *parts: object) -> list[Sample]:
+    return sorted(
+        samples,
+        key=lambda sample: _stable_digest(
+            random_state,
+            *parts,
+            _sample_fingerprint(sample),
+        ),
+    )
+
+
+def _stable_digest(random_state: int, *parts: object) -> str:
+    payload = ":".join(
+        [str(int(random_state)), *(str(part) for part in parts)]
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _sample_fingerprint(sample: Sample) -> str:
+    meta = dict(getattr(sample, "meta", {}) or {})
+    parts = {
+        "dataset": getattr(sample, "dataset", ""),
+        "subject": str(getattr(sample, "subject", "")),
+        "label": int(getattr(sample, "label")),
+    }
+    for key in (
+        "sample_id",
+        "data_index",
+        "epoch_id",
+        "local_index",
+        "start_index",
+        "end_index",
+        "window_start",
+        "window_end",
+        "window_start_sec",
+        "window_end_sec",
+    ):
+        if key in meta:
+            parts[key] = meta[key]
+    if len(parts) <= 3:
+        parts["repr_sha256"] = hashlib.sha256(repr(sample).encode("utf-8")).hexdigest()
+    return json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def summarize_and_save(

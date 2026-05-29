@@ -121,11 +121,11 @@ run_one () {
 
   if [ "$LM" = "few_shot" ]; then
     if [ "$INPUT" = "raw_data" ]; then
-      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 500"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 3 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 500"
     elif [ "$INPUT" = "encoded_time_series" ]; then
-      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 300"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 3 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 300"
     else
-      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 800"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 3 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 800"
     fi
     EXTRA_ARGS="$EXTRA_ARGS --train-input-cache-file $CACHE"
   fi

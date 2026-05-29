@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import pickle
-import random
 import re
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -34,6 +33,19 @@ SUBSET_SPECS = {
         "per_subject_per_label": 5,
         "subject_source": "all",
         "description": "100 subjects, 5 samples per subject per class from preprocessed DREAMT windows.",
+    },
+}
+
+SUBSET_LEVEL_SPECS = {
+    "debug": {
+        "strategy": "label_balanced",
+        "per_label": 3,
+        "description": "3 samples per class for smoke/debug runs.",
+    },
+    "pilot": {
+        "strategy": "label_balanced",
+        "per_label": 50,
+        "description": "50 samples per class for pilot/cost profiling runs.",
     },
 }
 
@@ -170,9 +182,7 @@ def create_dataset_subsets(
     if not filtered:
         raise RuntimeError(f"No samples with labels {labels} found for {dataset}.")
 
-    specs = {
-        "main": dict(SUBSET_SPECS[dataset]),
-    }
+    specs = subset_specs_for_dataset(dataset)
 
     reports = []
     subjects = subjects_with_all_labels(filtered, labels)
@@ -251,24 +261,38 @@ def create_dataset_subsets_from_shards(
     source_metadata = dict(manifest)
     source_metadata["source_type"] = "processed_subject_shards"
 
-    specs = {
-        "main": dict(SUBSET_SPECS[dataset]),
-    }
+    specs = subset_specs_for_dataset(dataset)
 
     reports = []
+    samples = []
+    for shard_path in sorted(shard_paths, key=lambda path: path.name):
+        shard_samples, _ = load_processed_payload(shard_path)
+        samples.extend(shard_samples)
+
+    if not samples:
+        raise RuntimeError(f"Processed manifest contains no samples for {dataset}.")
 
     for subset_name, spec in specs.items():
-        subset, subset_subjects = build_subset_from_shards(
-            shard_paths=shard_paths,
+        filtered = [
+            sample
+            for sample in samples
+            if int(getattr(sample, "label")) in labels
+        ]
+        subjects = subjects_with_all_labels(filtered, labels)
+
+        subset, subset_subjects = build_subset(
+            samples=filtered,
             labels=labels,
+            candidate_subjects=subjects,
             spec=spec,
             random_state=int(args.random_state),
             allow_shortage=bool(args.allow_shortage),
         )
 
-        second_subset, second_subjects = build_subset_from_shards(
-            shard_paths=shard_paths,
+        second_subset, second_subjects = build_subset(
+            samples=filtered,
             labels=labels,
+            candidate_subjects=subjects,
             spec=spec,
             random_state=int(args.random_state),
             allow_shortage=bool(args.allow_shortage),
@@ -303,162 +327,13 @@ def create_dataset_subsets_from_shards(
     return reports
 
 
-def build_subset_from_shards(
-    *,
-    shard_paths: list[Path],
-    labels: list[int],
-    spec: dict[str, Any],
-    random_state: int,
-    allow_shortage: bool,
-) -> tuple[list, list[str]]:
-    strategy = str(spec.get("strategy") or "").strip().lower()
-
-    if strategy == "subject_label_balanced":
-        return build_subject_label_subset_from_shards(
-            shard_paths=shard_paths,
-            labels=labels,
-            subject_count=int(spec["subject_count"]),
-            per_subject_per_label=int(spec["per_subject_per_label"]),
-            random_state=random_state,
-            allow_shortage=allow_shortage,
-        )
-
-    return build_label_subset_from_shards(
-        shard_paths=shard_paths,
-        labels=labels,
-        per_label=int(spec["per_label"]),
-        random_state=random_state,
-        allow_shortage=allow_shortage,
-    )
-
-
-def build_label_subset_from_shards(
-    *,
-    shard_paths: list[Path],
-    labels: list[int],
-    per_label: int,
-    random_state: int,
-    allow_shortage: bool,
-) -> tuple[list, list[str]]:
-    rng = random.Random(random_state)
-
-    label_set = set(labels)
-    reservoirs: dict[int, list] = {int(label): [] for label in labels}
-    seen: dict[int, int] = {int(label): 0 for label in labels}
-
-    for shard_path in sorted(shard_paths, key=lambda path: path.name):
-        samples, _ = load_processed_payload(shard_path)
-
-        for sample in samples:
-            label = int(getattr(sample, "label"))
-
-            if label not in label_set:
-                continue
-
-            seen[label] += 1
-            reservoir = reservoirs[label]
-
-            if len(reservoir) < per_label:
-                reservoir.append(sample)
-            else:
-                replace_idx = rng.randrange(seen[label])
-                if replace_idx < per_label:
-                    reservoir[replace_idx] = sample
-
-    shortages = {
-        label: count
-        for label, count in seen.items()
-        if count < per_label
+def subset_specs_for_dataset(dataset: str) -> dict[str, dict[str, Any]]:
+    specs = {
+        name: dict(spec)
+        for name, spec in SUBSET_LEVEL_SPECS.items()
     }
-
-    if shortages and not allow_shortage:
-        raise RuntimeError(
-            f"Cannot build exact label-balanced subset with {per_label} per label. "
-            f"Available: {seen}. Use --allow-shortage to clip."
-        )
-
-    selected = []
-    for label in labels:
-        take_n = min(per_label, seen[int(label)])
-        selected.extend(reservoirs[int(label)][:take_n])
-
-    rng.shuffle(selected)
-
-    subjects = sorted(
-        {str(sample.subject) for sample in selected},
-        key=subject_sort_key,
-    )
-
-    return selected, subjects
-
-
-def build_subject_label_subset_from_shards(
-    *,
-    shard_paths: list[Path],
-    labels: list[int],
-    subject_count: int,
-    per_subject_per_label: int,
-    random_state: int,
-    allow_shortage: bool,
-) -> tuple[list, list[str]]:
-    groups: dict[str, dict[int, list]] = defaultdict(lambda: defaultdict(list))
-
-    for shard_path in sorted(shard_paths, key=lambda path: path.name):
-        samples, _ = load_processed_payload(shard_path)
-
-        for sample in samples:
-            subject = str(getattr(sample, "subject"))
-            label = int(getattr(sample, "label"))
-
-            if label in labels:
-                groups[subject][label].append(sample)
-
-    minimum = 1 if allow_shortage else per_subject_per_label
-
-    eligible_subjects = [
-        subject
-        for subject, by_label in groups.items()
-        if all(
-            len(by_label.get(int(label), [])) >= minimum
-            for label in labels
-        )
-    ]
-
-    eligible_subjects = sorted(eligible_subjects, key=subject_sort_key)
-
-    if len(eligible_subjects) < subject_count and not allow_shortage:
-        raise RuntimeError(
-            f"Need {subject_count} subjects with at least "
-            f"{per_subject_per_label} samples per label, "
-            f"but only {len(eligible_subjects)} are available."
-        )
-
-    rng = random.Random(random_state)
-    rng.shuffle(eligible_subjects)
-
-    selected_subjects = sorted(
-        eligible_subjects[: min(subject_count, len(eligible_subjects))],
-        key=subject_sort_key,
-    )
-
-    selected = []
-
-    for subject in selected_subjects:
-        for label in labels:
-            group = list(groups[subject][int(label)])
-
-            if not group:
-                continue
-
-            local_rng = random.Random(stable_seed(random_state, subject, int(label)))
-            local_rng.shuffle(group)
-
-            take_n = min(per_subject_per_label, len(group))
-            selected.extend(group[:take_n])
-
-    rng.shuffle(selected)
-
-    return selected, selected_subjects
+    specs["main"] = dict(SUBSET_SPECS[dataset])
+    return specs
 
 
 def build_subset(
@@ -470,7 +345,6 @@ def build_subset(
     random_state: int,
     allow_shortage: bool,
 ) -> tuple[list, list[str]]:
-    rng = random.Random(random_state)
     strategy = str(spec.get("strategy") or "").strip().lower()
 
     if strategy == "subject_label_balanced":
@@ -482,7 +356,7 @@ def build_subset(
             candidate_subjects=candidate_subjects,
             per_subject_per_label=per_subject,
             subject_count=int(spec["subject_count"]),
-            rng=rng,
+            random_state=random_state,
             allow_shortage=allow_shortage,
         )
 
@@ -491,7 +365,7 @@ def build_subset(
             labels=labels,
             subjects=selected_subjects,
             per_subject_per_label=per_subject,
-            rng=rng,
+            random_state=random_state,
             allow_shortage=allow_shortage,
         )
 
@@ -501,7 +375,7 @@ def build_subset(
         samples=samples,
         labels=labels,
         per_label=int(spec["per_label"]),
-        rng=rng,
+        random_state=random_state,
         allow_shortage=allow_shortage,
     )
 
@@ -518,7 +392,7 @@ def select_subjects(
     candidate_subjects: list[str],
     per_subject_per_label: int,
     subject_count: int,
-    rng: random.Random,
+    random_state: int,
     allow_shortage: bool,
 ) -> list[str]:
     groups = group_by_subject_label(samples)
@@ -540,7 +414,14 @@ def select_subjects(
             f"but only {len(eligible)} are available."
         )
 
-    rng.shuffle(eligible)
+    eligible = sorted(
+        eligible,
+        key=lambda subject: stable_digest(
+            random_state,
+            "subject",
+            subject,
+        ),
+    )
 
     return sorted(
         eligible[: min(subject_count, len(eligible))],
@@ -553,7 +434,7 @@ def sample_label_balanced(
     samples: list,
     labels: list[int],
     per_label: int,
-    rng: random.Random,
+    random_state: int,
     allow_shortage: bool,
 ) -> list:
     groups = group_by_label(samples)
@@ -575,10 +456,10 @@ def sample_label_balanced(
 
     for label in labels:
         group = list(groups[int(label)])
-        rng.shuffle(group)
+        group = stable_sample_order(group, random_state, "label", int(label))
         selected.extend(group[:effective])
 
-    rng.shuffle(selected)
+    selected = stable_sample_order(selected, random_state, "output")
 
     return selected
 
@@ -589,7 +470,7 @@ def sample_subject_label_balanced(
     labels: list[int],
     subjects: list[str],
     per_subject_per_label: int,
-    rng: random.Random,
+    random_state: int,
     allow_shortage: bool,
 ) -> list:
     groups = group_by_subject_label(samples)
@@ -618,10 +499,16 @@ def sample_subject_label_balanced(
     for subject in subjects:
         for label in labels:
             group = list(groups[subject][int(label)])
-            rng.shuffle(group)
+            group = stable_sample_order(
+                group,
+                random_state,
+                "subject-label",
+                subject,
+                int(label),
+            )
             selected.extend(group[:effective])
 
-    rng.shuffle(selected)
+    selected = stable_sample_order(selected, random_state, "output")
 
     return selected
 
@@ -819,6 +706,25 @@ def stable_seed(random_state: int, *parts: object) -> int:
     return int.from_bytes(
         hashlib.sha256(payload).digest()[:8],
         "big",
+    )
+
+
+def stable_digest(random_state: int, *parts: object) -> str:
+    payload = ":".join(
+        [str(int(random_state)), *(str(part) for part in parts)]
+    ).encode("utf-8")
+
+    return hashlib.sha256(payload).hexdigest()
+
+
+def stable_sample_order(samples: list, random_state: int, *parts: object) -> list:
+    return sorted(
+        samples,
+        key=lambda sample: stable_digest(
+            random_state,
+            *parts,
+            sample_fingerprint(sample),
+        ),
     )
 
 

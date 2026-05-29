@@ -129,7 +129,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--few-shot-example-subjects",
         type=int,
-        default=5,
+        default=3,
         help="Number of non-evaluation subjects sampled for leave-one-subject-out few-shot examples.",
     )
     parser.add_argument(

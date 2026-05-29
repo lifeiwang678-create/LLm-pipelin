@@ -133,7 +133,7 @@ Example few-shot config data block:
 	    "n_per_class": 2,
 	    "random_state": 42,
 	    "example_selection": "leave_one_subject_out",
-	    "example_subjects": 5,
+	    "example_subjects": 3,
 	    "examples_per_subject_per_label": 1,
 	    "exclude_eval_subject": true
 	  }

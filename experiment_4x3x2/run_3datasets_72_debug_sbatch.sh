@@ -18,6 +18,8 @@ API_URL="http://${HOST}:${PORT}/v1"
 API_KEY=${API_KEY:-lm-studio}
 CONCURRENCY=${CONCURRENCY:-8}
 SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
+FEW_SHOT_TRAIN_SUBSET_LEVEL=${FEW_SHOT_TRAIN_SUBSET_LEVEL:-pilot}
+FEW_SHOT_EXAMPLE_SUBJECTS=${FEW_SHOT_EXAMPLE_SUBJECTS:-3}
 LOG_EVERY=${LOG_EVERY:-1}
 VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.25}
 VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
@@ -33,6 +35,8 @@ echo "Log dir: $LOGROOT"
 echo "API URL: $API_URL"
 echo "Client concurrency: $CONCURRENCY"
 echo "Evaluation subset: $SUBSET_LEVEL"
+echo "Few-shot train subset: $FEW_SHOT_TRAIN_SUBSET_LEVEL"
+echo "Few-shot example subjects: $FEW_SHOT_EXAMPLE_SUBJECTS"
 
 export MPLCONFIGDIR="${LOGROOT}/mplconfig"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
@@ -132,24 +136,37 @@ run_one () {
   local end_time
   local log_file
   local eval_cache
+  local train_cache
   local extra_args=()
   local status=0
 
   start_time=$(date +%Y-%m-%dT%H:%M:%S)
   log_file="$LOGROOT/${dataset}_${input}_${lm}_${output}.log"
   eval_cache="Processed/LLMSubsets/${dataset}/${SUBSET_LEVEL}/${dataset}_${input}_${SUBSET_LEVEL}_samples.pkl"
+  train_cache="$eval_cache"
 
   echo "=================================================="
   echo "Running: dataset=$dataset input=$input lm=$lm output=$output"
   echo "Log: $log_file"
 
   if [[ "$lm" == "few_shot" ]]; then
+    train_cache="Processed/LLMSubsets/${dataset}/${FEW_SHOT_TRAIN_SUBSET_LEVEL}/${dataset}_${input}_${FEW_SHOT_TRAIN_SUBSET_LEVEL}_samples.pkl"
+    if [[ ! -s "$train_cache" ]]; then
+      echo "Missing few-shot train subset cache: $train_cache"
+      echo "Refusing to fall back to eval subset cache because that can leak evaluation samples into few-shot examples."
+      status=1
+      end_time=$(date +%Y-%m-%dT%H:%M:%S)
+      failures=$((failures + 1))
+      echo "FAILED: dataset=$dataset input=$input lm=$lm output=$output status=$status"
+      echo "$dataset,$input,$lm,$output,$status,$start_time,$end_time,$log_file" >> "$LOGROOT/status.csv"
+      return
+    fi
     extra_args+=(
       --few-shot-example-selection leave_one_subject_out
-      --few-shot-example-subjects 5
+      --few-shot-example-subjects "$FEW_SHOT_EXAMPLE_SUBJECTS"
       --few-shot-examples-per-subject-per-label 1
       --few-shot-n-per-class 1
-      --train-input-cache-file "$eval_cache"
+      --train-input-cache-file "$train_cache"
     )
     if [[ "$input" == "raw_data" ]]; then
       extra_args+=(--few-shot-example-max-chars 500)

@@ -24,7 +24,7 @@ def test_leave_one_subject_out_fewshot_excludes_eval_subject_and_is_reproducible
         output_instructions='Return JSON with "predicted_state".',
         examples=examples,
         example_selection="leave_one_subject_out",
-        example_subjects=5,
+        example_subjects=3,
         examples_per_subject_per_label=1,
         random_state=42,
         dataset="WESAD",
@@ -37,15 +37,15 @@ def test_leave_one_subject_out_fewshot_excludes_eval_subject_and_is_reproducible
         output_instructions='Return JSON with "predicted_state".',
         examples=examples,
         example_selection="leave_one_subject_out",
-        example_subjects=5,
+        example_subjects=3,
         examples_per_subject_per_label=1,
         random_state=42,
         dataset="WESAD",
     )
     prompt_b = usage_b.build_prompt(eval_sample)
 
-    assert usage_a.last_example_count == 10
-    assert len(usage_a.last_example_subjects) == 5
+    assert usage_a.last_example_count == 6
+    assert len(usage_a.last_example_subjects) == 3
     assert "S3" not in usage_a.last_example_subjects
     assert usage_a.last_example_subjects == usage_b.last_example_subjects
     assert prompt_a == prompt_b
@@ -59,7 +59,7 @@ def test_leave_one_subject_out_fewshot_requires_enough_other_subjects() -> None:
         output_instructions='Return JSON with "predicted_state".',
         examples=examples,
         example_selection="leave_one_subject_out",
-        example_subjects=5,
+        example_subjects=3,
         examples_per_subject_per_label=1,
         random_state=42,
         dataset="WESAD",

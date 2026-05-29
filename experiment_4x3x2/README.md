@@ -562,7 +562,7 @@ python main.py -dataset HHAR -Input raw_data -LM few_shot -output label_only `
   --train-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
   --eval-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
   --few-shot-example-selection leave_one_subject_out `
-  --few-shot-example-subjects 5 `
+  --few-shot-example-subjects 3 `
   --few-shot-examples-per-subject-per-label 1 `
   --few-shot-example-max-chars 800 `
   --log-every 1
@@ -609,7 +609,7 @@ example source.
 WESAD example:
 
 ```powershell
-.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --subject-split all --input-cache-dir Processed --eval-input-cache-file "Processed/LLMSubsets/WESAD/debug/WESAD_feature_description_debug_samples.pkl" --few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-example-max-chars 800 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --subject-split all --input-cache-dir Processed --eval-input-cache-file "Processed/LLMSubsets/WESAD/debug/WESAD_feature_description_debug_samples.pkl" --few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 3 --few-shot-examples-per-subject-per-label 1 --few-shot-example-max-chars 800 --log-every 1
 ```
 
 DREAMT example:

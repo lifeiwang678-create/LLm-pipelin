@@ -225,6 +225,14 @@ class HHARLoader:
                 )
         return samples
 
+    def _discover_subjects(self) -> list[str]:
+        file_path = self._find_file(ACC_FILE)
+        df = pd.read_csv(file_path, nrows=self.max_rows, usecols=["User", "gt"])
+        df = df.dropna(subset=["User", "gt"]).copy()
+        df["activity_label"] = df["gt"].apply(normalize_activity_label)
+        df = df[df["activity_label"].isin(TARGET_ACTIVITIES)]
+        return sorted(str(subject) for subject in df["User"].dropna().unique())
+
     def _build_gyro_group_index(self, gyro_df: pd.DataFrame | None) -> dict[tuple, pd.DataFrame]:
         """Pre-index and downsample gyro streams once per HHAR group."""
         if gyro_df is None or gyro_df.empty:

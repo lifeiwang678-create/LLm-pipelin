@@ -41,7 +41,7 @@ def build_lm_usage(
             example_max_chars=config.get("example_max_chars"),
             dataset=dataset,
             example_selection=config.get("example_selection", "class_balanced"),
-            example_subjects=int(config.get("example_subjects") or 5),
+            example_subjects=int(config.get("example_subjects") or 3),
             examples_per_subject_per_label=int(config.get("examples_per_subject_per_label") or 1),
             exclude_eval_subject=bool(config.get("exclude_eval_subject", True)),
         )
