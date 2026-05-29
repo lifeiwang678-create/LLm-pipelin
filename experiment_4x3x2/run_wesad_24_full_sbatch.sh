@@ -10,6 +10,7 @@
 BASE=/home/users/grad/2025/25t9801/projects/LLm-pipelin/experiment_4x3x2
 LOGROOT=/home/users/grad/2025/25t9801/logs/wesad_24_full_$(date +%Y%m%d%H%M%S)
 CONCURRENCY=${CONCURRENCY:-64}
+SUBSET_LEVEL=${SUBSET_LEVEL:-main}
 
 mkdir -p "$LOGROOT"
 cd "$BASE"
@@ -17,12 +18,25 @@ cd "$BASE"
 echo "Job started at $(date)"
 echo "Log dir: $LOGROOT"
 echo "Client concurrency: $CONCURRENCY"
+echo "Evaluation subset: $SUBSET_LEVEL"
+
+GPU_MONITOR_PID=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi > "$LOGROOT/nvidia_smi_start.txt" || true
+  nvidia-smi --query-gpu=timestamp,index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw --format=csv -l 5 \
+    > "$LOGROOT/gpu_usage.csv" 2>/dev/null &
+  GPU_MONITOR_PID=$!
+fi
 
 source .venv_vllm_cu121/bin/activate
 
 VLLM_PID=""
 
 cleanup () {
+  if [[ -n "${GPU_MONITOR_PID:-}" ]]; then
+    kill "$GPU_MONITOR_PID" 2>/dev/null || true
+    wait "$GPU_MONITOR_PID" 2>/dev/null || true
+  fi
   if [[ -n "${VLLM_PID:-}" ]]; then
     kill "$VLLM_PID" 2>/dev/null || true
   fi
@@ -80,15 +94,20 @@ run_one () {
   OUTPUT=$3
 
   if [ "$INPUT" = "raw_data" ]; then
-    CACHE="Processed/WESAD_raw_data_samples.pkl"
+    CACHE="Processed/LLMSubsets/WESAD/${SUBSET_LEVEL}/WESAD_raw_data_${SUBSET_LEVEL}_samples.pkl"
   elif [ "$INPUT" = "feature_description" ]; then
-    CACHE="Processed/WESAD_feature_description_samples.pkl"
+    CACHE="Processed/LLMSubsets/WESAD/${SUBSET_LEVEL}/WESAD_feature_description_${SUBSET_LEVEL}_samples.pkl"
   elif [ "$INPUT" = "encoded_time_series" ]; then
-    CACHE="Processed/WESAD_encoded_time_series_samples.pkl"
+    CACHE="Processed/LLMSubsets/WESAD/${SUBSET_LEVEL}/WESAD_encoded_time_series_${SUBSET_LEVEL}_samples.pkl"
   elif [ "$INPUT" = "extra_knowledge" ]; then
-    CACHE="Processed/WESAD_extra_knowledge_samples.pkl"
+    CACHE="Processed/LLMSubsets/WESAD/${SUBSET_LEVEL}/WESAD_extra_knowledge_${SUBSET_LEVEL}_samples.pkl"
   else
     echo "Unknown input: $INPUT"
+    return 1
+  fi
+  if [ ! -s "$CACHE" ]; then
+    echo "Missing fixed evaluation subset cache: $CACHE"
+    echo "Run prepare_data_subsets.py and prepare_subset_inputs.py first."
     return 1
   fi
 
@@ -102,12 +121,13 @@ run_one () {
 
   if [ "$LM" = "few_shot" ]; then
     if [ "$INPUT" = "raw_data" ]; then
-      EXTRA_ARGS="--train-subjects S2 --test-subjects S3 S4 S5 S6 S7 S8 S9 S10 S11 S13 S14 S15 S16 S17 --few-shot-n-per-class 1 --few-shot-example-max-chars 500"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 500"
     elif [ "$INPUT" = "encoded_time_series" ]; then
-      EXTRA_ARGS="--train-subjects S2 --test-subjects S3 S4 S5 S6 S7 S8 S9 S10 S11 S13 S14 S15 S16 S17 --few-shot-n-per-class 1 --few-shot-example-max-chars 300"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 300"
     else
-      EXTRA_ARGS="--train-subjects S2 --test-subjects S3 S4 S5 S6 S7 S8 S9 S10 S11 S13 S14 S15 S16 S17 --few-shot-n-per-class 1 --few-shot-example-max-chars 800"
+      EXTRA_ARGS="--few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-n-per-class 1 --few-shot-example-max-chars 800"
     fi
+    EXTRA_ARGS="$EXTRA_ARGS --train-input-cache-file $CACHE"
   fi
 
   if [ "$LM" = "multi_agent" ]; then
@@ -120,7 +140,9 @@ run_one () {
     -LM "$LM" \
     -output "$OUTPUT" \
     --use-input-cache \
-    --input-cache-file "$CACHE" \
+    --input-cache-dir Processed \
+    --subject-split all \
+    --eval-input-cache-file "$CACHE" \
     --api-url http://127.0.0.1:8000/v1 \
     -llm qwen2.5-7b-instruct \
     --concurrency "$CONCURRENCY" \
@@ -140,6 +162,10 @@ for LM in direct few_shot multi_agent; do
     done
   done
 done
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi > "$LOGROOT/nvidia_smi_end.txt" || true
+fi
 
 echo "All experiments finished at $(date)"
 echo "Logs saved in: $LOGROOT"

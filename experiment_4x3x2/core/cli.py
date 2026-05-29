@@ -117,6 +117,27 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--few-shot-n-per-class", type=int, help="Few-shot examples per label.")
+    parser.add_argument(
+        "--few-shot-example-selection",
+        choices=["leave_one_subject_out", "class_balanced"],
+        default="leave_one_subject_out",
+        help=(
+            "Few-shot sampling policy. Defaults to leave_one_subject_out: for each eval subject, "
+            "exclude that subject and sample examples from other subjects."
+        ),
+    )
+    parser.add_argument(
+        "--few-shot-example-subjects",
+        type=int,
+        default=5,
+        help="Number of non-evaluation subjects sampled for leave-one-subject-out few-shot examples.",
+    )
+    parser.add_argument(
+        "--few-shot-examples-per-subject-per-label",
+        type=int,
+        default=1,
+        help="Examples sampled from each selected subject for each label in leave-one-subject-out mode.",
+    )
 
     parser.add_argument(
         "--few-shot-example-max-chars",

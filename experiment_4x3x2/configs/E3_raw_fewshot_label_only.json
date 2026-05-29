@@ -28,7 +28,11 @@
   "lm_usage": {
     "type": "few_shot",
     "n_per_class": 2,
-    "random_state": 42
+    "random_state": 42,
+    "example_selection": "leave_one_subject_out",
+    "example_subjects": 5,
+    "examples_per_subject_per_label": 1,
+    "exclude_eval_subject": true
   },
   "output": {
     "type": "label_only"

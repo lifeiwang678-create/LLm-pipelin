@@ -21,6 +21,8 @@ class OpenAICompatibleClient:
         max_tokens: int = 128,
         timeout: int = 600,
         system_message: str | None = None,
+        chat_template_kwargs: dict | None = None,
+        extra_body: dict | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
@@ -31,6 +33,8 @@ class OpenAICompatibleClient:
         # 新增 system_message:换到 GPT-4 / Claude / Llama 时,加 system 角色 prompt
         # 能显著稳定 JSON 输出。默认 None 保持对 qwen2.5-14b 的旧行为不变。
         self.system_message = system_message
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
+        self.extra_body = dict(extra_body or {})
         self.last_usage: dict = {}
         self.usage_records: list[dict] = []
 
@@ -57,6 +61,10 @@ class OpenAICompatibleClient:
             "temperature": self.temperature if temperature is None else float(temperature),
             "max_tokens": int(max_tokens) if max_tokens is not None else self.max_tokens,
         }
+        if self.chat_template_kwargs:
+            payload["chat_template_kwargs"] = self.chat_template_kwargs
+        if self.extra_body:
+            payload.update(self.extra_body)
         start = time.perf_counter()
         endpoint = f"{self.api_url}/chat/completions"
         try:

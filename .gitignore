@@ -69,3 +69,23 @@ vicuna-7b-v1.5/
 # Figures and temporary analysis artifacts
 *.png
 *.pdf
+
+# Python environments
+experiment_4x3x2/.venv*/
+experiment_4x3x2/__pycache__/
+experiment_4x3x2/**/__pycache__/
+
+# Large datasets and generated caches
+experiment_4x3x2/Dataset/
+experiment_4x3x2/Processed/
+
+# Large binary/cache files
+experiment_4x3x2/**/*.pkl
+experiment_4x3x2/**/*.npy
+experiment_4x3x2/**/*.npz
+experiment_4x3x2/**/*.pt
+experiment_4x3x2/**/*.bin
+experiment_4x3x2/**/*.tar.gz
+
+# Logs
+experiment_4x3x2/**/*.log

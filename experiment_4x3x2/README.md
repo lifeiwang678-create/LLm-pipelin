@@ -151,7 +151,8 @@ DREAMT sleep-stage labels are mapped as:
 |-- run_experiment.py
 |-- preprocess_datasets.py
 |-- preprocess_inputs.py
-|-- prepare_llm_subsets.py
+|-- prepare_data_subsets.py
+|-- prepare_subset_inputs.py
 |-- count_dataset_samples.py
 |-- requirements.txt
 ```
@@ -207,6 +208,43 @@ vllm serve Qwen/Qwen2.5-7B-Instruct \
 ```
 
 The runner supports concurrent client requests with `--concurrency`. The shard benchmark was stable up to server concurrency 96; for full experiments, `--concurrency 64` is the default in the Slurm WESAD scripts to leave some headroom.
+
+## Qwen3 Smoke Test
+
+Qwen3 can generate thinking blocks by default. For this framework, disable
+thinking before formal experiments because the output parser expects strict
+JSON only.
+
+Create a separate Qwen3 vLLM environment:
+
+```bash
+./setup_qwen3_vllm_env.sh
+```
+
+Run the Qwen3 JSON smoke test:
+
+```bash
+sbatch run_qwen3_vllm_smoke_sbatch.sh
+```
+
+For vLLM builds that expose server-level template defaults, the smoke job
+starts Qwen3 with:
+
+```bash
+--default-chat-template-kwargs '{"enable_thinking": false}'
+```
+
+On the current A100 shard nodes, NVIDIA driver 535/CUDA 12.2 cannot run the
+latest PyPI vLLM stacks that require CUDA 12.4+ or CUDA 13. If vLLM fails for
+Qwen3, use the Transformers fallback smoke first:
+
+```bash
+sbatch --export=ALL,MODEL_PATH=Qwen/Qwen3-0.6B,SERVED_MODEL_NAME=qwen3-0.6b run_qwen3_transformers_smoke_sbatch.sh
+```
+
+Both smoke paths check direct JSON responses and a small real-pipeline subset
+across WESAD, HHAR, and DREAMT. Only run formal Qwen3 experiments after
+`qwen3_smoke_report.json` shows `"ok": true` and `invalid_count` is 0.
 
 ## Dataset Loaders
 
@@ -455,62 +493,83 @@ For `extra_knowledge`, the input cache depends on `knowledge_text`,
 
 ## LLM Evaluation Subsets
 
-The recommended LLM protocol fixes train/test subjects before sampling:
+The current subset protocol uses fixed, reproducible evaluation subsets and
+leave-one-subject-out few-shot examples:
 
-- Few-shot examples are selected only from `train_subjects`.
-- LLM evaluation samples are selected only from unseen `test_subjects`.
-- The same subject must not appear in both few-shot examples and evaluation.
+- Evaluation subset seed: `42`.
+- `debug`: 3 samples per label for smoke/debug runs.
+- `pilot`: 50 samples per label for rough method checks.
+- `main`: official subset size below.
 
-Default subject-independent splits are defined in `Dataset/registry.py`:
+| Dataset | `main` subset |
+| --- | --- |
+| WESAD | `160:160` label-balanced samples from available WESAD subjects |
+| HHAR | 9 users, each user `50:50` |
+| DREAMT | 100 subjects, each subject `5:5` |
 
-| Dataset | Train subjects | Unseen evaluation subjects |
-| --- | --- | --- |
-| WESAD | `S2 S3 S4 S5 S6` | `S7 S8` |
-| HHAR | `a b c d` | `g h i` |
-| DREAMT | `S099` | `S100` |
+DREAMT must be precomputed from the full `data_64Hz` subject set before this
+strict subset step; a cache containing only smoke-test subjects will fail.
 
-Generate the three LLM subset levels after input caches exist:
+Generate fixed data subsets from preprocessed `SensorSample` windows first:
 
 ```powershell
-python prepare_llm_subsets.py -dataset all -Input all --overwrite
+python prepare_data_subsets.py -dataset all --overwrite
 ```
 
-This writes evaluation-only `LLMSample` caches under:
+This writes dataset-level subsets under:
 
 ```text
-Processed/LLMSubsets/<DATASET>/<debug|pilot|main>/
+Processed/DataSubsets/<DATASET>/<debug|pilot|main>/<DATASET>_<subset>_windows.pkl
 ```
 
-Subset levels:
+Then build the four LLM input representations from exactly those fixed subsets:
 
-- `debug`: 3 samples per label, used to check the 24-combination flow.
-- `pilot`: up to 50 samples per label, used to compare rough method trends.
-- `main`: subject-and-label balanced unseen-subject subset. By default this
-  selects up to 100 samples per subject per label, clipped by available data.
+```powershell
+python prepare_subset_inputs.py -dataset all -Input all --overwrite
+```
 
-Direct evaluation on an unseen HHAR debug subset:
+This writes `LLMSample` caches under:
+
+```text
+Processed/LLMSubsets/<DATASET>/<debug|pilot|main>/<DATASET>_<INPUT>_<subset>_samples.pkl
+```
+
+Each data subset JSON sidecar records `subset_spec` and a two-pass
+`reproducibility_check`. The LLM input subset sidecar records
+`source_data_subset_metadata`, so every input representation can be traced back
+to the same sampled preprocessed windows. By default the script fails if the
+official target size is unavailable; use `--allow-shortage` only for diagnostics.
+
+Direct evaluation on an HHAR debug subset:
 
 ```powershell
 python main.py -dataset HHAR -Input raw_data -LM direct -output label_only `
   --use-input-cache `
+  --subject-split all `
   --eval-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
   --log-every 1
 ```
 
-Few-shot evaluation with examples from train subjects and evaluation from an
-unseen subset:
+Few-shot evaluation uses the same fixed subset input cache as the example
+source and as evaluation data. For each evaluation subject, that same subject is
+excluded from examples; then 5 other subjects are sampled, with 1 example per
+subject per label, using seed `42`.
 
 ```powershell
 python main.py -dataset HHAR -Input raw_data -LM few_shot -output label_only `
   --use-input-cache `
-  --train-subjects a b c d `
-  --test-subjects g h i `
-  --train-input-cache-file "Processed/HHAR_raw_data_samples.pkl" `
+  --subject-split all `
+  --train-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
   --eval-input-cache-file "Processed/LLMSubsets/HHAR/debug/HHAR_raw_data_debug_samples.pkl" `
-  --few-shot-n-per-class 1 `
+  --few-shot-example-selection leave_one_subject_out `
+  --few-shot-example-subjects 5 `
+  --few-shot-examples-per-subject-per-label 1 `
   --few-shot-example-max-chars 800 `
   --log-every 1
 ```
+
+Prediction CSVs include `few_shot_example_subjects` and
+`few_shot_example_count` for auditing subject leakage.
 
 For dataset-size checks without saving samples or calling the LLM:
 
@@ -523,32 +582,34 @@ such as `data_dir: ".."` resolve correctly.
 
 ## 72-Combination Script
 
-Run a 72-combination debug pass from precomputed input caches:
+Run the Slurm 72-combination pass from fixed subset caches. By default it uses
+`SUBSET_LEVEL=debug` (3 samples per label):
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all_3datasets_4x3x2.ps1 -UseInputCache -BalancedPerLabel 1 -LogEvery 1
+```bash
+sbatch run_3datasets_72_debug_sbatch.sh
 ```
 
-Run without balanced debug sampling:
+Use the fixed main subsets instead:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all_3datasets_4x3x2.ps1 -UseInputCache -FullData -LogEvery 10
+```bash
+sbatch --export=ALL,SUBSET_LEVEL=main run_3datasets_72_debug_sbatch.sh
 ```
 
-With `-FullData`, direct and multi-agent runs rely on the default
-subject-independent split from `Dataset/registry.py`, so they evaluate on the
-same held-out test subjects as few-shot. Use `--subject-split all` only for
-legacy all-subject evaluation.
+The script expects fixed subset input caches
+(`Processed/LLMSubsets/<DATASET>/<subset>/...`). Few-shot uses that same subset
+cache as its example source and excludes the current evaluation subject at
+prompt-build time.
 
 ## Few-Shot Runs
 
-Few-shot runs use the dataset's subject-independent defaults unless explicit
-train/test subjects are provided.
+Few-shot runs default to leave-one-subject-out examples when launched through
+the CLI. Use fixed subset caches for evaluation and full input caches for the
+example source.
 
 WESAD example:
 
 ```powershell
-.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --train-subjects S2 --test-subjects S3 --few-shot-n-per-class 1 --few-shot-example-max-chars 800 --balanced-per-label 1 --log-every 1
+.venv/bin/python main.py -dataset WESAD -Input feature_description -LM few_shot -output label_only --use-input-cache --subject-split all --input-cache-dir Processed --eval-input-cache-file "Processed/LLMSubsets/WESAD/debug/WESAD_feature_description_debug_samples.pkl" --few-shot-example-selection leave_one_subject_out --few-shot-example-subjects 5 --few-shot-examples-per-subject-per-label 1 --few-shot-example-max-chars 800 --log-every 1
 ```
 
 DREAMT example:
@@ -577,6 +638,8 @@ Prediction CSV files include:
 - `input_type`
 - `lm_type`
 - `output_type`
+- `few_shot_example_subjects`
+- `few_shot_example_count`
 - per-sample LLM usage and cost columns
 
 Metrics JSON files include:
@@ -594,6 +657,16 @@ Metrics JSON files include:
 
 Invalid predictions are also counted in all-sample invalid-as-wrong metrics.
 
+For small-sample cost profiling, the Slurm scripts write `gpu_usage.csv` with
+continuous `nvidia-smi` telemetry. Combine a metrics JSON file and that GPU log:
+
+```powershell
+python summarize_cost_profile.py `
+  --metrics-json "Results/<RUN>_metrics.json" `
+  --gpu-csv "<LOGROOT>/gpu_usage.csv" `
+  --output "<LOGROOT>/cost_profile.json"
+```
+
 ## Full 72-Run Study
 
 The complete binary study is:
@@ -604,10 +677,11 @@ The complete binary study is:
 
 Recommended order:
 
-1. Run all 72 combinations with `--balanced-per-label 1`.
-2. Confirm every combination saves valid output files.
-3. Increase `--balanced-per-label` for a larger subset.
-4. Run full data without `--balanced-per-label`.
+1. Build fixed data subsets with `prepare_data_subsets.py`.
+2. Build subset input caches with `prepare_subset_inputs.py`.
+3. Run all 72 combinations with `SUBSET_LEVEL=debug`.
+4. Confirm every combination saves valid output files.
+5. Run larger subsets with `SUBSET_LEVEL=pilot` or `SUBSET_LEVEL=main`.
 
 Run `multi_agent` last. It is the slowest path because it makes three LLM calls per sample.
 

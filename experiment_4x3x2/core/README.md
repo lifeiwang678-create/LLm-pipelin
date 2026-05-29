@@ -114,8 +114,11 @@ For debug runs, use balanced sampling:
 }
 ```
 
-Few-shot runs must explicitly set both `data.train_subjects` and `data.test_subjects`; overlapping subjects are rejected.
-Few-shot also requires at least `n_per_class` training examples for every label in `labels`; insufficient examples raise a clear error instead of silently producing an imbalanced prompt.
+Few-shot CLI runs default to `leave_one_subject_out`: for each evaluation
+sample, the current subject is excluded from examples, then 5 other subjects are
+sampled with 1 example per subject per label using seed 42. Legacy
+`class_balanced` few-shot still requires disjoint `data.train_subjects` and
+`data.test_subjects`; overlapping subjects are rejected.
 
 Example few-shot config data block:
 
@@ -125,11 +128,16 @@ Example few-shot config data block:
     "train_subjects": ["S2", "S3", "S4", "S5", "S6"],
     "test_subjects": ["S7", "S8"]
   },
-  "lm_usage": {
-    "type": "few_shot",
-    "n_per_class": 2
-  }
-}
+	  "lm_usage": {
+	    "type": "few_shot",
+	    "n_per_class": 2,
+	    "random_state": 42,
+	    "example_selection": "leave_one_subject_out",
+	    "example_subjects": 5,
+	    "examples_per_subject_per_label": 1,
+	    "exclude_eval_subject": true
+	  }
+	}
 ```
 
 ## Experiment Matrix

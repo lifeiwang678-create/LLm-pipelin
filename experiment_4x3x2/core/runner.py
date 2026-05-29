@@ -119,6 +119,12 @@ def build_experiment_config(args: Namespace) -> dict:
                 else default_few_shot_n
             ),
             "random_state": 42,
+            "example_selection": getattr(args, "few_shot_example_selection", "leave_one_subject_out"),
+            "example_subjects": int(getattr(args, "few_shot_example_subjects", 5) or 5),
+            "examples_per_subject_per_label": int(
+                getattr(args, "few_shot_examples_per_subject_per_label", 1) or 1
+            ),
+            "exclude_eval_subject": True,
             "example_max_chars": args.few_shot_example_max_chars
             if args.few_shot_example_max_chars is not None
             else default_example_max_chars,
@@ -165,24 +171,40 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     usage_type = _normalize_lm_usage_type(config["lm_usage"].get("type", "direct"))
 
     train_subjects, test_subjects = _resolve_run_subjects(config, dataset_loader, usage_type)
+    fewshot_leave_one_out = _fewshot_uses_leave_one_subject_out(config, usage_type)
     if train_subjects:
         print(f"Train subjects: {train_subjects}")
     if test_subjects:
         print(f"Test/eval subjects: {test_subjects}")
+    if fewshot_leave_one_out:
+        lm_cfg = config.get("lm_usage") or {}
+        print(
+            "Few-shot example policy: leave_one_subject_out "
+            f"(subjects={int(lm_cfg.get('example_subjects', 5))}, "
+            f"per_subject_per_label={int(lm_cfg.get('examples_per_subject_per_label', 1))}, "
+            f"seed={int(lm_cfg.get('random_state', 42))})"
+        )
 
     if config["data"].get("use_input_cache"):
         if usage_type == "few_shot":
-            validate_fewshot_split(train_subjects, test_subjects)
-            train_samples = _load_input_cache_samples(config, input_provider, train_subjects, labels, role="train")
-            print(f"Few-shot train label distribution: {label_distribution(train_samples)}")
+            if fewshot_leave_one_out:
+                train_samples = _load_input_cache_samples(config, input_provider, None, labels, role="train")
+            else:
+                validate_fewshot_split(train_subjects, test_subjects)
+                train_samples = _load_input_cache_samples(config, input_provider, train_subjects, labels, role="train")
+            print(f"Few-shot example-source label distribution: {label_distribution(train_samples)}")
             eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels, role="eval")
         else:
             train_samples = []
             eval_sensor_samples = _load_input_cache_samples(config, input_provider, test_subjects, labels, role="eval")
     elif usage_type == "few_shot":
-        validate_fewshot_split(train_subjects, test_subjects)
-        train_sensor_samples = _load_sensor_samples(config, dataset_loader, train_subjects, labels)
-        print(f"Few-shot train label distribution: {label_distribution(train_sensor_samples)}")
+        if fewshot_leave_one_out:
+            example_subjects = _discover_subjects_for_split(dataset_loader)
+            train_sensor_samples = _load_sensor_samples(config, dataset_loader, example_subjects, labels)
+        else:
+            validate_fewshot_split(train_subjects, test_subjects)
+            train_sensor_samples = _load_sensor_samples(config, dataset_loader, train_subjects, labels)
+        print(f"Few-shot example-source label distribution: {label_distribution(train_sensor_samples)}")
         train_samples = input_provider.transform_all(train_sensor_samples)
         eval_sensor_samples = _load_sensor_samples(config, dataset_loader, test_subjects, labels)
     else:
@@ -344,15 +366,24 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
     return metrics
 
 
+def _fewshot_uses_leave_one_subject_out(config: dict, usage_type: str | None = None) -> bool:
+    normalized_usage = usage_type or _normalize_lm_usage_type((config.get("lm_usage") or {}).get("type", "direct"))
+    if normalized_usage != "few_shot":
+        return False
+    selection = str((config.get("lm_usage") or {}).get("example_selection", "class_balanced"))
+    return selection.strip().lower().replace("-", "_") in {"leave_one_subject_out", "loo", "subject_loo"}
+
+
 def _resolve_run_subjects(config: dict, dataset_loader, usage_type: str) -> tuple[list[str] | None, list[str] | None]:
     data_config = config.get("data") or {}
     split_mode = str(data_config.get("subject_split", "subject_independent") or "subject_independent").lower()
     subjects = normalize_subjects(data_config.get("subjects"))
     train_subjects = normalize_subjects(data_config.get("train_subjects"))
     test_subjects = normalize_subjects(data_config.get("test_subjects"))
+    fewshot_leave_one_out = _fewshot_uses_leave_one_subject_out(config, usage_type)
 
     if split_mode == "all":
-        if usage_type == "few_shot":
+        if usage_type == "few_shot" and not fewshot_leave_one_out:
             train_subjects, test_subjects = _complete_subject_independent_split(
                 dataset_loader,
                 train_subjects,
@@ -386,7 +417,7 @@ def _resolve_run_subjects(config: dict, dataset_loader, usage_type: str) -> tupl
         subjects,
     )
     validate_subject_independent_split(train_subjects, test_subjects)
-    if usage_type == "few_shot":
+    if usage_type == "few_shot" and not fewshot_leave_one_out:
         validate_fewshot_split(train_subjects, test_subjects)
     return train_subjects, test_subjects
 
@@ -561,10 +592,15 @@ def _run_one_sample(
     )
 
     usage_start = len(getattr(client, "usage_records", []))
+    few_shot_example_subjects = None
+    few_shot_example_count = None
     if hasattr(lm_usage, "run_agent_pipeline"):
         raw_response = lm_usage.run_agent_pipeline(sample, client)
     else:
         prompt = lm_usage.build_prompt(sample)
+        if hasattr(lm_usage, "last_example_subjects"):
+            few_shot_example_subjects = list(getattr(lm_usage, "last_example_subjects", []) or [])
+            few_shot_example_count = int(getattr(lm_usage, "last_example_count", 0) or 0)
         raw_response = client.complete(prompt)
 
     llm_usage = _aggregate_llm_usage(getattr(client, "usage_records", [])[usage_start:])
@@ -604,6 +640,12 @@ def _run_one_sample(
         "input_type": meta.get("input_type", input_name),
         "lm_type": usage_type,
         "output_type": config["output"].get("type", "label_only"),
+        "few_shot_example_subjects": ";".join(few_shot_example_subjects)
+        if few_shot_example_subjects is not None
+        else "",
+        "few_shot_example_count": few_shot_example_count
+        if few_shot_example_count is not None
+        else "",
         **llm_usage,
         **flat_meta,
     }
