@@ -82,6 +82,11 @@ def build_experiment_config(args: Namespace) -> dict:
             "input_cache_file": getattr(args, "input_cache_file", None),
             "train_input_cache_file": getattr(args, "train_input_cache_file", None),
             "eval_input_cache_file": getattr(args, "eval_input_cache_file", None),
+            "multi_view_input_types": getattr(
+                args,
+                "multi_view_input_types",
+                None,
+            ),
         }
     )
 
@@ -134,6 +139,9 @@ def build_experiment_config(args: Namespace) -> dict:
                 int(args.multi_agent_intermediate_max_tokens)
                 if getattr(args, "multi_agent_intermediate_max_tokens", None) is not None
                 else default_intermediate_max_tokens
+            ),
+            "use_multi_view_inputs": bool(
+                getattr(args, "use_multi_view_inputs", True)
             ),
         },
         "output": {
@@ -235,8 +243,24 @@ def run_experiment(config: dict, dataset_name: str | None = None) -> dict:
         )
     if config["data"].get("use_input_cache"):
         eval_samples = eval_sensor_samples
+        if _uses_multi_view_inputs(config, usage_type):
+            _attach_multi_view_input_cache_samples(
+                config=config,
+                eval_samples=eval_samples,
+                subjects=test_subjects,
+                labels=labels,
+                base_input_name=input_provider.name,
+                role="eval",
+            )
     else:
-        eval_samples = input_provider.transform_all(eval_sensor_samples)
+        if _uses_multi_view_inputs(config, usage_type):
+            eval_samples = _transform_multi_view_samples(
+                sensor_samples=eval_sensor_samples,
+                config=config,
+                base_input_provider=input_provider,
+            )
+        else:
+            eval_samples = input_provider.transform_all(eval_sensor_samples)
     if not eval_samples:
         raise RuntimeError("No evaluation samples found.")
 
@@ -427,6 +451,239 @@ def _validate_balanced_per_label_counts(
         "Balanced debug subset failed. "
         f"Expected exactly {expected} samples per label; " + "; ".join(details) + "."
     )
+
+
+def _uses_multi_view_inputs(config: dict, usage_type: str) -> bool:
+    """Use four input representations for multi-agent runs.
+
+    This is enabled by default for multi_agent. Set
+    config["lm_usage"]["use_multi_view_inputs"] = False to keep the old behavior.
+    """
+    if usage_type != "multi_agent":
+        return False
+    lm_cfg = config.get("lm_usage") or {}
+    return bool(lm_cfg.get("use_multi_view_inputs", True))
+
+
+def _multi_view_input_types(config: dict) -> list[str]:
+    data_cfg = config.get("data") or {}
+    lm_cfg = config.get("lm_usage") or {}
+
+    configured = (
+        data_cfg.get("multi_view_input_types")
+        or lm_cfg.get("multi_view_input_types")
+        or config.get("multi_view_input_types")
+    )
+    if configured:
+        if isinstance(configured, str):
+            values = [item.strip() for item in configured.split(",")]
+        else:
+            values = [str(item).strip() for item in configured]
+        values = [item for item in values if item]
+    else:
+        values = [
+            "raw_data",
+            "encoded_time_series",
+            "feature_description",
+            "extra_knowledge",
+        ]
+
+    # Preserve order while removing duplicates.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
+
+def _provider_name_for_input(config: dict, input_type: str) -> str:
+    input_config = dict(config.get("input") or {})
+    input_config["type"] = input_type
+    input_config.setdefault("dataset", config["dataset"]["name"])
+    return build_input_provider(input_config).name
+
+
+def _attach_multi_view_input_cache_samples(
+    *,
+    config: dict,
+    eval_samples: list,
+    subjects,
+    labels: list[int],
+    base_input_name: str,
+    role: str = "eval",
+) -> None:
+    """Attach input_views to each already-selected LLMSample.
+
+    The base eval samples are selected first, then this function loads the other
+    input caches and aligns samples by sample metadata. The original sample object is
+    mutated in-place by adding sample.meta["input_views"].
+    """
+    view_types = _multi_view_input_types(config)
+    view_names = [_provider_name_for_input(config, input_type) for input_type in view_types]
+    if base_input_name not in view_names:
+        view_names.insert(0, base_input_name)
+
+    cache_by_view: dict[str, list] = {}
+    for view_name in view_names:
+        use_explicit = view_name == base_input_name
+        cache_by_view[view_name] = _load_input_cache_samples_for_input(
+            config=config,
+            input_name=view_name,
+            subjects=subjects,
+            labels=labels,
+            role=role,
+            use_explicit=use_explicit,
+        )
+
+    index_by_view = {
+        view_name: _build_sample_index(samples)
+        for view_name, samples in cache_by_view.items()
+    }
+
+    missing_counts = {view_name: 0 for view_name in view_names}
+    for idx, base_sample in enumerate(eval_samples):
+        views: dict[str, str] = {}
+
+        base_text = getattr(base_sample, "input_text", None)
+        if base_text is not None:
+            views[base_input_name] = str(base_text)
+
+        base_key = _sample_alignment_key(base_sample)
+        for view_name, samples in cache_by_view.items():
+            if view_name == base_input_name and view_name in views:
+                continue
+
+            matched = None
+            if base_key is not None:
+                matched = index_by_view.get(view_name, {}).get(base_key)
+
+            if matched is None and idx < len(samples):
+                candidate = samples[idx]
+                if _samples_match_for_fallback(base_sample, candidate):
+                    matched = candidate
+
+            if matched is not None:
+                views[view_name] = str(getattr(matched, "input_text", ""))
+            else:
+                missing_counts[view_name] += 1
+
+        _set_sample_input_views(base_sample, views)
+
+    missing_summary = {k: v for k, v in missing_counts.items() if v}
+    if missing_summary:
+        print(f"Multi-view input cache alignment missing counts: {missing_summary}")
+    print(f"Attached multi-view input views: {view_names}")
+
+
+def _transform_multi_view_samples(*, sensor_samples: list, config: dict, base_input_provider):
+    """Build multi-view LLMSamples directly from SensorSample objects."""
+    view_types = _multi_view_input_types(config)
+    providers_by_view = {}
+    for input_type in view_types:
+        input_config = dict(config.get("input") or {})
+        input_config["type"] = input_type
+        input_config.setdefault("dataset", config["dataset"]["name"])
+        provider = build_input_provider(input_config)
+        providers_by_view[provider.name] = provider
+
+    if base_input_provider.name not in providers_by_view:
+        providers_by_view[base_input_provider.name] = base_input_provider
+
+    transformed_by_view = {
+        view_name: provider.transform_all(sensor_samples)
+        for view_name, provider in providers_by_view.items()
+    }
+
+    base_samples = transformed_by_view[base_input_provider.name]
+    for idx, base_sample in enumerate(base_samples):
+        views = {
+            view_name: str(samples[idx].input_text)
+            for view_name, samples in transformed_by_view.items()
+            if idx < len(samples)
+        }
+        _set_sample_input_views(base_sample, views)
+
+    print(f"Built multi-view input samples: {list(transformed_by_view)}")
+    return base_samples
+
+
+def _build_sample_index(samples: list) -> dict[tuple, object]:
+    index: dict[tuple, object] = {}
+    for sample in samples:
+        key = _sample_alignment_key(sample)
+        if key is not None and key not in index:
+            index[key] = sample
+    return index
+
+
+def _sample_alignment_key(sample) -> tuple | None:
+    meta = _sample_meta(sample)
+    dataset = str(getattr(sample, "dataset", meta.get("dataset", "")))
+    subject = str(getattr(sample, "subject", meta.get("subject", "")))
+    label = str(getattr(sample, "label", meta.get("label", "")))
+
+    sample_id = meta.get("sample_id")
+    if sample_id not in (None, ""):
+        return ("sample_id", dataset, subject, label, str(sample_id))
+
+    key_groups = [
+        ("local_index",),
+        ("data_index",),
+        ("epoch_id",),
+        ("window_id",),
+        ("start_index", "end_index"),
+        ("window_start", "window_end"),
+        ("window_start_sec", "window_end_sec"),
+    ]
+    for group in key_groups:
+        values = [meta.get(key) for key in group]
+        if all(value not in (None, "") for value in values):
+            return (group, dataset, subject, label, *[str(value) for value in values])
+
+    return None
+
+
+def _samples_match_for_fallback(left, right) -> bool:
+    return (
+        str(getattr(left, "dataset", "")) == str(getattr(right, "dataset", ""))
+        and str(getattr(left, "subject", "")) == str(getattr(right, "subject", ""))
+        and str(getattr(left, "label", "")) == str(getattr(right, "label", ""))
+    )
+
+
+def _sample_meta(sample) -> dict:
+    meta = getattr(sample, "meta", None)
+    if isinstance(meta, dict):
+        return meta
+    metadata = getattr(sample, "metadata", None)
+    if isinstance(metadata, dict):
+        return metadata
+    return {}
+
+
+def _set_sample_input_views(sample, views: dict[str, str]) -> None:
+    meta = dict(_sample_meta(sample))
+    meta["input_views"] = views
+    meta["input_type"] = "multi_view"
+    meta["input_canonical_type"] = "multi_view"
+
+    try:
+        setattr(sample, "meta", meta)
+    except Exception:
+        existing = getattr(sample, "meta", None)
+        if isinstance(existing, dict):
+            existing.update(meta)
+
+    # Some multi-agent implementations look for sample.metadata instead of sample.meta.
+    try:
+        setattr(sample, "metadata", meta)
+    except Exception:
+        existing = getattr(sample, "metadata", None)
+        if isinstance(existing, dict):
+            existing.update(meta)
+
 
 
 def _resolve_run_subjects(config: dict, dataset_loader, usage_type: str) -> tuple[list[str] | None, list[str] | None]:
@@ -793,12 +1050,37 @@ def _processed_file_path(config: dict, dataset_name: str) -> Path:
 
 
 def _load_input_cache_samples(config: dict, input_provider, subjects, labels: list[int], role: str = "eval"):
+    return _load_input_cache_samples_for_input(
+        config=config,
+        input_name=input_provider.name,
+        subjects=subjects,
+        labels=labels,
+        role=role,
+        use_explicit=True,
+    )
+
+
+def _load_input_cache_samples_for_input(
+    *,
+    config: dict,
+    input_name: str,
+    subjects,
+    labels: list[int],
+    role: str = "eval",
+    use_explicit: bool = True,
+):
     data_config = config.get("data") or {}
     dataset_name = config["dataset"]["name"]
-    input_cache_path = _input_cache_file_path(config, dataset_name, input_provider.name, role=role)
+    input_cache_path = _input_cache_file_path(
+        config,
+        dataset_name,
+        input_name,
+        role=role,
+        use_explicit=use_explicit,
+    )
     if not input_cache_path.exists():
         raise FileNotFoundError(
-            f"Input cache not found: {input_cache_path}. "
+            f"Input cache not found for input={input_name}: {input_cache_path}. "
             "Run preprocess_inputs.py first, or remove --use-input-cache."
         )
 
@@ -810,7 +1092,7 @@ def _load_input_cache_samples(config: dict, input_provider, subjects, labels: li
         metadata=metadata,
         cache_path=input_cache_path,
         cache_kind="input",
-        expected_input_type=input_provider.name,
+        expected_input_type=input_name,
     )
     samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
     if not isinstance(samples, list):
@@ -841,15 +1123,16 @@ def _load_input_cache_samples(config: dict, input_provider, subjects, labels: li
     return filtered
 
 
-def _input_cache_file_path(config: dict, dataset_name: str, input_name: str, role: str = "eval") -> Path:
+def _input_cache_file_path(config: dict, dataset_name: str, input_name: str, role: str = "eval", use_explicit: bool = True) -> Path:
     data_config = config.get("data") or {}
-    role_key = "train_input_cache_file" if role == "train" else "eval_input_cache_file"
-    role_explicit = data_config.get(role_key) or config.get(role_key)
-    if role_explicit:
-        return Path(role_explicit)
-    explicit = data_config.get("input_cache_file") or config.get("input_cache_file")
-    if explicit:
-        return Path(explicit)
+    if use_explicit:
+        role_key = "train_input_cache_file" if role == "train" else "eval_input_cache_file"
+        role_explicit = data_config.get(role_key) or config.get(role_key)
+        if role_explicit:
+            return Path(role_explicit)
+        explicit = data_config.get("input_cache_file") or config.get("input_cache_file")
+        if explicit:
+            return Path(explicit)
     input_cache_dir = Path(
         data_config.get("input_cache_dir") or config.get("input_cache_dir") or "Processed"
     )
