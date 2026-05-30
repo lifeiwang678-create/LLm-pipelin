@@ -5,7 +5,13 @@ import hashlib
 import re
 from collections import defaultdict
 
-from core.schema import Sample, label_block, label_names_for_dataset, label_rules_block
+from core.schema import (
+    Sample,
+    decision_guidance_block,
+    label_block,
+    label_names_for_dataset,
+    label_rules_block,
+)
 
 
 class FewShotUsage:
@@ -104,12 +110,14 @@ Labels:
 Dataset-specific label rules:
 {label_rules_block(self.dataset)}
 
+Decision calibration:
+{decision_guidance_block(self.dataset)}
+
 Important constraints:
 - Use only the information provided in this prompt.
 - Use the examples only as label-format and decision-reference demonstrations.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
-- Do not predict label 1 or the positive class from one high absolute sensor value alone.
 - Consider evidence for both labels before choosing the final label.
 - Do not add extra explanation outside JSON.
 - Predict only the label of the final sample.

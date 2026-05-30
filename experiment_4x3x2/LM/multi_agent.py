@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from core.schema import Sample, label_block, label_rules_block
+from core.schema import Sample, decision_guidance_block, label_block, label_rules_block
 
 
 # Intermediate agents usually need more output tokens than the final classifier.
@@ -82,6 +82,9 @@ Labels:
 Dataset-specific label rules:
 {label_rules_block(self.dataset)}
 
+Decision calibration:
+{decision_guidance_block(self.dataset)}
+
 Agents:
 {agent_lines}
 - {self.final_decider}: compare independent agent votes and choose the final label.
@@ -90,7 +93,7 @@ Important constraints:
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
-- Do not treat one high absolute sensor value as sufficient evidence for label 1 or the positive class.
+- Do not use either label as a default fallback.
 - The final answer must follow the requested JSON schema.
 
 Sample content:
@@ -164,6 +167,9 @@ Labels:
 Dataset-specific label rules:
 {label_rules_block(self.dataset)}
 
+Decision calibration:
+{decision_guidance_block(self.dataset)}
+
 Constraints:
 - Work independently. Do not assume other agents' conclusions.
 - Use only the information provided in this prompt.
@@ -171,7 +177,10 @@ Constraints:
 - Do not invent sensor values, features, labels, or retrieved examples.
 - Apply the dataset-specific label rules exactly.
 - Consider both positive and negative evidence.
-- Do not rely on one isolated high absolute sensor value.
+- Do not rely on one isolated high absolute sensor value for either label.
+- Do not treat either label as a default fallback.
+- Predict label 1 only when its overall support clearly outweighs label 0 support.
+- Predict label 0 when label 0 support clearly outweighs label 1 support.
 - If evidence is weak, lower confidence rather than forcing strong certainty.
 - Output JSON only.
 
@@ -226,6 +235,9 @@ Labels:
 Dataset-specific label rules:
 {label_rules_block(self.dataset)}
 
+Decision calibration:
+{decision_guidance_block(self.dataset)}
+
 Critical constraints:
 - Produce the final answer only.
 - Follow the existing output instructions exactly.
@@ -236,7 +248,10 @@ Critical constraints:
 - Apply the dataset-specific label rules exactly.
 - The majority vote is useful evidence, but it is not automatically correct.
 - Override the majority vote only when the sample content and label rules support the override.
-- Do not default to label 1 or the positive class because a single sensor feature is high.
+- Do not use either label as a default fallback.
+- Do not use label 1 as a shortcut because a single sensor feature is high.
+- If an agent predicts label 1 with concrete multi-cue evidence, evaluate that evidence directly before choosing label 0.
+- If an agent predicts label 0 with concrete counter-evidence, evaluate that evidence directly before choosing label 1.
 
 Sample content:
 {sample.input_text}
@@ -371,4 +386,3 @@ Parsed majority vote:
 
 
 __all__ = ["MultiAgentUsage"]
-

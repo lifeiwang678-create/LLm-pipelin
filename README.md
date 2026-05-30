@@ -13,6 +13,8 @@ cd experiment_4x3x2
 .venv/bin/python main.py -h
 ```
 
+For a step-by-step Chinese runbook, see `experiment_4x3x2/RUNNING.md`.
+
 `experiment_4x3x2/` contains the maintained binary-classification 4 x 3 x 2 modular pipeline:
 
 - Datasets: `WESAD`, `HHAR`, `DREAMT`

@@ -7,6 +7,8 @@ cd experiment_4x3x2
 .venv/bin/python main.py -h
 ```
 
+For a concise Chinese runbook focused on commands, caches, Slurm, and logs, see `RUNNING.md`.
+
 The framework keeps one shared execution path:
 
 ```text
