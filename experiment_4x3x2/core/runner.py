@@ -29,11 +29,44 @@ DEFAULT_LM_CLIENT_CONFIG = {
 }
 
 
+def _build_guided_schema(output_type: str, labels) -> dict:
+    """JSON schema for vLLM guided decoding: forces the model to emit exactly the
+    expected object so it cannot ramble into prose and get truncated (guarantees
+    a parseable predicted_state for every sample, regardless of model verbosity)."""
+    props = {"predicted_state": {"type": "integer", "enum": [int(x) for x in labels]}}
+    required = ["predicted_state"]
+    if output_type == "label_explanation":
+        props["explanation"] = {"type": "string"}
+        required.append("explanation")
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
 def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
     long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series", "extra_knowledge"}
     lm_timeout = 1200 if args.LM == "multi_agent" else 600 if long_input else 300
-    max_tokens = 256 if args.output == "label_explanation" else 128
+    max_tokens = 512 if args.output == "label_explanation" else 128
+    _eval_labels = args.labels if args.labels is not None else dataset_cfg.get("labels", [0, 1])
+    # guided decoding only for single-shot outputs; multi_agent intermediate agents
+    # emit different JSON shapes that a fixed schema would break.
+    _lm_extra_body = (
+        {
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "classification",
+                    "schema": _build_guided_schema(args.output, _eval_labels),
+                },
+            }
+        }
+        if args.LM != "multi_agent"
+        else {}
+    )
     default_few_shot_n = 1 if long_input else 2
     default_example_max_chars = 800 if long_input else None
     default_intermediate_max_tokens = 512
@@ -112,7 +145,7 @@ def build_experiment_config(args: Namespace) -> dict:
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
         "labels": args.labels if args.labels is not None else dataset_cfg.get("labels", [0, 1]),
-        "output_dir": "Results",
+        "output_dir": getattr(args, "output_dir", None) or "Results",
         "dataset": dataset_config,
         "data": data_cfg,
         "input": input_config,
@@ -158,6 +191,11 @@ def build_experiment_config(args: Namespace) -> dict:
             # model should emit the label directly, not a long <think> trace.
             # Harmless for non-Qwen3 models (templates that ignore the kwarg).
             "chat_template_kwargs": {"enable_thinking": False},
+            # Force valid structured output (vLLM guided decoding). Without this,
+            # verbose models (e.g. Llama-4) preamble with prose and get truncated
+            # before emitting the JSON -> 100% invalid. guided_json constrains the
+            # output at the logits level so it ALWAYS matches the schema.
+            "extra_body": _lm_extra_body,
         },
         "evaluation": {
             "balanced_per_label": args.balanced_per_label,

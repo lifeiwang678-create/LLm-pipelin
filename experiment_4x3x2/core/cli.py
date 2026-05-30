@@ -185,5 +185,11 @@ def parse_args() -> argparse.Namespace:
         help="Concurrent LLM requests. Defaults to 1 for the original serial behavior.",
     )
     parser.add_argument("--log-every", type=int, default=10, help="Progress print interval.")
+    parser.add_argument(
+        "--output-dir",
+        default="Results",
+        help="Directory for result files. Use a per-model subfolder (e.g. Results/Qwen3.6-35B-A3B) "
+             "to keep different models' outputs separate.",
+    )
 
     return parser.parse_args()

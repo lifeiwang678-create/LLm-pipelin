@@ -24,6 +24,10 @@ SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
 LOGROOT=${LOGROOT:-/workspace/logs/llm_nomultiagent_${SUBSET_LEVEL}_$(date +%Y%m%d%H%M%S)}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}
 SERVED_MODEL_NAME=${SERVED_MODEL_NAME:-qwen2.5-7b-instruct}
+# Per-model results folder so different models don't overwrite each other:
+# Results/<MODEL_TAG>/ . Defaults to the served model name.
+MODEL_TAG=${MODEL_TAG:-$SERVED_MODEL_NAME}
+RESULTS_DIR=${RESULTS_DIR:-Results/${MODEL_TAG}}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8000}
 API_URL="http://${HOST}:${PORT}/v1"
@@ -50,6 +54,7 @@ VLLM_DTYPE=${VLLM_DTYPE:-bfloat16}
 
 mkdir -p "$LOGROOT"
 cd "$BASE"
+mkdir -p "$RESULTS_DIR"
 
 TOTAL=$(( $(echo $DATASETS | wc -w) * $(echo $INPUTS | wc -w) * $(echo $LMS | wc -w) * $(echo $OUTPUTS | wc -w) ))
 
@@ -57,6 +62,8 @@ echo "Job started at $(date)"
 echo "Base: $BASE"
 echo "Log dir: $LOGROOT"
 echo "API URL: $API_URL"
+echo "Model tag: $MODEL_TAG"
+echo "Results dir: $RESULTS_DIR"
 echo "Client concurrency: $CONCURRENCY"
 echo "Evaluation subset (mode): $SUBSET_LEVEL"
 echo "Few-shot train subset: $FEW_SHOT_TRAIN_SUBSET_LEVEL"
@@ -260,6 +267,7 @@ run_one () {
     --api-url "$API_URL" \
     --api-key "$API_KEY" \
     -llm "$SERVED_MODEL_NAME" \
+    --output-dir "$RESULTS_DIR" \
     --concurrency "$CONCURRENCY" \
     --log-every "$LOG_EVERY" \
     "${extra_args[@]}" \
