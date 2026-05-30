@@ -106,7 +106,6 @@ run_config () {
     --max-model-len "$max_model_len" \
     --max-num-seqs "$max_num_seqs" \
     --max-num-batched-tokens "$max_num_batched_tokens" \
-    --disable-log-requests \
     > "$server_log" 2>&1 &
   VLLM_PID=$!
 

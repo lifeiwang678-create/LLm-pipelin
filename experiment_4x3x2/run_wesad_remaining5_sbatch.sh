@@ -44,7 +44,6 @@ nohup vllm serve Qwen/Qwen2.5-7B-Instruct \
   --max-model-len 8192 \
   --max-num-seqs 96 \
   --max-num-batched-tokens 24576 \
-  --disable-log-requests \
   > "$LOGROOT/vllm.log" 2>&1 &
 VLLM_PID=$!
 

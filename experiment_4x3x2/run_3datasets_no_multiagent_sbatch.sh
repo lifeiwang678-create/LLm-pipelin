@@ -1,15 +1,27 @@
 #!/bin/bash
 #SBATCH -p a100
 #SBATCH --gres=shard:1
-#SBATCH -J llm_72_debug
-#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.out
-#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.err
-#SBATCH --time=08:00:00
+#SBATCH -J llm_nomultiagent
+#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_nomultiagent_%j.out
+#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_nomultiagent_%j.err
+#SBATCH --time=12:00:00
 
-set -euo pipefail
+# Runs the 4x?x2 grid over 3 datasets, EXCLUDING the multi_agent (majority-vote)
+# LM method. By default LMS="direct few_shot" (the remaining 2 of the 3 methods),
+# so the grid is 4 inputs x 2 LMs x 2 outputs x 3 datasets = 48 combos.
+#
+# Modes (set SUBSET_LEVEL):
+#   SUBSET_LEVEL=debug   -> small smoke subset (partial)
+#   SUBSET_LEVEL=main    -> full dataset
+#
+# Everything is configurable via env; to re-enable multi_agent later:
+#   LMS="direct few_shot multi_agent" ./run_3datasets_no_multiagent_sbatch.sh
+
+set -uo pipefail
 
 BASE=${BASE:-/workspace/LLm-pipelin/experiment_4x3x2}
-LOGROOT=${LOGROOT:-/workspace/logs/llm_72_debug_$(date +%Y%m%d%H%M%S)}
+SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
+LOGROOT=${LOGROOT:-/workspace/logs/llm_nomultiagent_${SUBSET_LEVEL}_$(date +%Y%m%d%H%M%S)}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}
 SERVED_MODEL_NAME=${SERVED_MODEL_NAME:-qwen2.5-7b-instruct}
 HOST=${HOST:-127.0.0.1}
@@ -17,41 +29,54 @@ PORT=${PORT:-8000}
 API_URL="http://${HOST}:${PORT}/v1"
 API_KEY=${API_KEY:-lm-studio}
 CONCURRENCY=${CONCURRENCY:-8}
-SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
 FEW_SHOT_TRAIN_SUBSET_LEVEL=${FEW_SHOT_TRAIN_SUBSET_LEVEL:-pilot}
 FEW_SHOT_EXAMPLE_SUBJECTS=${FEW_SHOT_EXAMPLE_SUBJECTS:-3}
 LOG_EVERY=${LOG_EVERY:-1}
+
+# --- experiment grid (all overridable via env) ---
+DATASETS=${DATASETS:-"WESAD HHAR DREAMT"}
+INPUTS=${INPUTS:-"raw_data feature_description encoded_time_series extra_knowledge"}
+LMS=${LMS:-"direct few_shot"}                 # multi_agent intentionally excluded
+OUTPUTS=${OUTPUTS:-"label_only label_explanation"}
+
+# --- vLLM / server ---
+REUSE_EXISTING_SERVER=${REUSE_EXISTING_SERVER:-0}
 VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
 VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS:-16}
 VLLM_MAX_NUM_BATCHED_TOKENS=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
-VLLM_DATA_PARALLEL_SIZE=${VLLM_DATA_PARALLEL_SIZE:-1}   # set to #GPUs to use all cards (data-parallel replicas)
-VLLM_DTYPE=${VLLM_DTYPE:-bfloat16}                     # use "auto" for pre-quantized (FP8) checkpoints
+VLLM_DATA_PARALLEL_SIZE=${VLLM_DATA_PARALLEL_SIZE:-1}
+VLLM_DTYPE=${VLLM_DTYPE:-bfloat16}
 
 mkdir -p "$LOGROOT"
 cd "$BASE"
+
+TOTAL=$(( $(echo $DATASETS | wc -w) * $(echo $INPUTS | wc -w) * $(echo $LMS | wc -w) * $(echo $OUTPUTS | wc -w) ))
 
 echo "Job started at $(date)"
 echo "Base: $BASE"
 echo "Log dir: $LOGROOT"
 echo "API URL: $API_URL"
 echo "Client concurrency: $CONCURRENCY"
-echo "Evaluation subset: $SUBSET_LEVEL"
+echo "Evaluation subset (mode): $SUBSET_LEVEL"
 echo "Few-shot train subset: $FEW_SHOT_TRAIN_SUBSET_LEVEL"
-echo "Few-shot example subjects: $FEW_SHOT_EXAMPLE_SUBJECTS"
+echo "Datasets: $DATASETS"
+echo "Inputs:   $INPUTS"
+echo "LMs:      $LMS   (multi_agent excluded by default)"
+echo "Outputs:  $OUTPUTS"
+echo "Total combinations: $TOTAL"
 
 export MPLCONFIGDIR="${LOGROOT}/mplconfig"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-# CUDA forward-compat: host driver is 565 (CUDA 12.7) but torch/vllm are built for CUDA 13.
-# Prepend the cuda-compat-13-0 libcuda (580.x) so CUDA 13 runs on the older kernel driver.
 CUDA_COMPAT_DIR=${CUDA_COMPAT_DIR:-/usr/local/cuda-13.0/compat}
 if [[ -e "$CUDA_COMPAT_DIR/libcuda.so.1" ]]; then
   export LD_LIBRARY_PATH="$CUDA_COMPAT_DIR:${LD_LIBRARY_PATH:-}"
 fi
 mkdir -p "$MPLCONFIGDIR"
 
-for dataset in WESAD HHAR DREAMT; do
-  for input in raw_data feature_description encoded_time_series extra_knowledge; do
+# pre-check evaluation subset caches for the requested grid
+for dataset in $DATASETS; do
+  for input in $INPUTS; do
     subset_cache="Processed/LLMSubsets/${dataset}/${SUBSET_LEVEL}/${dataset}_${input}_${SUBSET_LEVEL}_samples.pkl"
     if [[ ! -s "$subset_cache" ]]; then
       echo "Missing fixed evaluation subset cache: $subset_cache"
@@ -85,11 +110,6 @@ cleanup () {
   fi
 }
 trap cleanup EXIT
-
-# REUSE_EXISTING_SERVER=1 lets an externally-managed server (e.g. an nginx
-# load balancer in front of multiple vLLM instances) handle requests; in that
-# case this script does NOT start its own vLLM.
-REUSE_EXISTING_SERVER=${REUSE_EXISTING_SERVER:-0}
 
 if curl -fsS "${API_URL}/models" > /dev/null 2>&1; then
   if [[ "$REUSE_EXISTING_SERVER" == "1" ]]; then
@@ -144,9 +164,6 @@ source .venv/bin/activate
 echo "dataset,input,lm,output,status,start_time,end_time,log" > "$LOGROOT/status.csv"
 
 failures=0
-
-# --- progress / ETA tracking (added for RunPod) ---
-TOTAL=72
 COUNT=0
 RUN_START=$(date +%s)
 
@@ -260,10 +277,10 @@ run_one () {
   echo "$dataset,$input,$lm,$output,$status,$start_time,$end_time,$log_file" >> "$LOGROOT/status.csv"
 }
 
-for dataset in WESAD HHAR DREAMT; do
-  for input in raw_data feature_description encoded_time_series extra_knowledge; do
-    for lm in direct few_shot multi_agent; do
-      for output in label_only label_explanation; do
+for dataset in $DATASETS; do
+  for input in $INPUTS; do
+    for lm in $LMS; do
+      for output in $OUTPUTS; do
         run_one "$dataset" "$input" "$lm" "$output"
         COUNT=$((COUNT + 1))
         print_progress
@@ -276,7 +293,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi > "$LOGROOT/nvidia_smi_end.txt" || true
 fi
 
-echo "All 72 debug combinations finished at $(date)"
+echo "All $TOTAL combinations finished at $(date)"
 echo "Failures: $failures"
 echo "Logs saved in: $LOGROOT"
 

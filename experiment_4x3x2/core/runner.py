@@ -154,6 +154,10 @@ def build_experiment_config(args: Namespace) -> dict:
             "temperature": 0.0,
             "max_tokens": max_tokens,
             "timeout": lm_timeout,
+            # Disable Qwen3 "thinking" mode: this is a classification task, the
+            # model should emit the label directly, not a long <think> trace.
+            # Harmless for non-Qwen3 models (templates that ignore the kwarg).
+            "chat_template_kwargs": {"enable_thinking": False},
         },
         "evaluation": {
             "balanced_per_label": args.balanced_per_label,
