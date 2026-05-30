@@ -9,6 +9,12 @@ import re
 # json.loads 会一律记为 invalid。这里在出错时再做一次容错回退,扫描第一个 {...} 块。
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+# Truncation recovery: when a long label_explanation answer is cut off by
+# max_tokens the closing brace is lost and every json.loads above fails. With
+# guided decoding predicted_state is emitted first, so it is always present ->
+# pull it (and any partial explanation) out by regex as a last resort.
+_PRED_STATE_RE = re.compile(r'"predicted_state"\s*:\s*(-?\d+)')
+_EXPLANATION_RE = re.compile(r'"explanation"\s*:\s*"(.*)', re.DOTALL)
 
 
 class LabelOnlyOutput:
@@ -81,6 +87,18 @@ Return STRICT JSON only.
                     obj = json.loads(match.group(0))
                 except json.JSONDecodeError:
                     obj = None
+
+        # 4) 截断回退:JSON 被 max_tokens 截断(常见于长 explanation),所有上面
+        #    的 json.loads 都失败。guided decoding 下 predicted_state 一定在最前,
+        #    正则救回标签,顺带尽量取回部分 explanation。
+        if obj is None:
+            m = _PRED_STATE_RE.search(stripped)
+            if m:
+                recovered = {"predicted_state": int(m.group(1))}
+                em = _EXPLANATION_RE.search(stripped)
+                if em:
+                    recovered["explanation"] = em.group(1).rstrip().rstrip('"')
+                return recovered, ""
 
         if obj is None:
             return None, "invalid_json"
