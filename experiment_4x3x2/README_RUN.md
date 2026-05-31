@@ -219,6 +219,38 @@ Use an external OpenAI-compatible LLM service:
   -llm qwen2.5-7b-instruct
 ```
 
+Use Gemini through the official `google-genai` SDK. Keep the key out of code
+and configs by setting `GEMINI_API_KEY` before running:
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+.venv/bin/python main.py \
+  -dataset WESAD \
+  -Input feature_description \
+  -LM direct \
+  -output label_only \
+  --lm-provider gemini \
+  -llm gemini-3.5-flash
+```
+
+PowerShell equivalent:
+
+```powershell
+$env:GEMINI_API_KEY = "your-api-key"
+python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --lm-provider gemini
+```
+
+Config files can use the same provider without storing the key:
+
+```json
+"lm_client": {
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "temperature": 0.0,
+  "max_tokens": 128
+}
+```
+
 Default output files are saved under `Results/`:
 
 ```text

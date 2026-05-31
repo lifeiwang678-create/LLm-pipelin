@@ -15,11 +15,17 @@ from Input import build_input_provider
 from LM import build_lm_usage
 from Output import build_output_handler
 
-from .lm_client import OpenAICompatibleClient
+from .lm_client import (
+    GEMINI_PROVIDER,
+    OPENAI_COMPATIBLE_PROVIDER,
+    build_lm_client,
+    normalize_lm_provider,
+)
 from .splits import normalize_subjects, validate_fewshot_split, validate_subject_independent_split
 
 
-DEFAULT_LM_CLIENT_CONFIG = {
+DEFAULT_OPENAI_COMPATIBLE_LM_CLIENT_CONFIG = {
+    "provider": OPENAI_COMPATIBLE_PROVIDER,
     "api_url": "http://127.0.0.1:1234/v1",
     "api_key": "lm-studio",
     "model": "qwen2.5-14b-instruct",
@@ -27,6 +33,16 @@ DEFAULT_LM_CLIENT_CONFIG = {
     "max_tokens": 128,
     "timeout": 1200,
 }
+
+DEFAULT_GEMINI_LM_CLIENT_CONFIG = {
+    "provider": GEMINI_PROVIDER,
+    "model": "gemini-3.5-flash",
+    "temperature": 0.0,
+    "max_tokens": 128,
+    "timeout": 1200,
+}
+
+DEFAULT_LM_CLIENT_CONFIG = DEFAULT_OPENAI_COMPATIBLE_LM_CLIENT_CONFIG
 
 
 def build_experiment_config(args: Namespace) -> dict:
@@ -108,6 +124,25 @@ def build_experiment_config(args: Namespace) -> dict:
             }
         )
 
+    lm_provider = normalize_lm_provider(getattr(args, "lm_provider", OPENAI_COMPATIBLE_PROVIDER))
+    default_model = "gemini-3.5-flash" if lm_provider == GEMINI_PROVIDER else "qwen2.5-14b-instruct"
+    lm_client_config = {
+        "provider": lm_provider,
+        "model": args.llm or default_model,
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+        "timeout": lm_timeout,
+    }
+    if lm_provider == OPENAI_COMPATIBLE_PROVIDER:
+        lm_client_config.update(
+            {
+                "api_url": args.api_url,
+                "api_key": args.api_key or "lm-studio",
+            }
+        )
+    elif args.api_key:
+        lm_client_config["api_key"] = args.api_key
+
     return {
         "run_name": f"{args.dataset}_{args.Input}_{args.LM}_{args.output}",
         "result_filename_style": "compact",
@@ -147,14 +182,7 @@ def build_experiment_config(args: Namespace) -> dict:
         "output": {
             "type": args.output,
         },
-        "lm_client": {
-            "api_url": args.api_url,
-            "api_key": args.api_key,
-            "model": args.llm,
-            "temperature": 0.0,
-            "max_tokens": max_tokens,
-            "timeout": lm_timeout,
-        },
+        "lm_client": lm_client_config,
         "evaluation": {
             "balanced_per_label": args.balanced_per_label,
             "log_every": args.log_every,
@@ -911,7 +939,7 @@ def _run_one_sample(
     sample_meta_safe_keys: set[str],
     shared_lm_usage=None,
 ) -> dict:
-    client = OpenAICompatibleClient(**config["lm_client"])
+    client = build_lm_client(config["lm_client"])
     lm_usage = shared_lm_usage
     if lm_usage is None:
         lm_usage = build_lm_usage(
@@ -1321,8 +1349,16 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     output_config.setdefault("type", "label_only")
     normalized["output"] = output_config
 
-    lm_client_config = dict(DEFAULT_LM_CLIENT_CONFIG)
-    lm_client_config.update(dict(normalized.get("lm_client") or {}))
+    raw_lm_client_config = dict(normalized.get("lm_client") or {})
+    lm_provider = normalize_lm_provider(
+        raw_lm_client_config.get("provider", raw_lm_client_config.get("type", OPENAI_COMPATIBLE_PROVIDER))
+    )
+    if lm_provider == GEMINI_PROVIDER:
+        lm_client_config = dict(DEFAULT_GEMINI_LM_CLIENT_CONFIG)
+    else:
+        lm_client_config = dict(DEFAULT_OPENAI_COMPATIBLE_LM_CLIENT_CONFIG)
+    lm_client_config.update(raw_lm_client_config)
+    lm_client_config["provider"] = lm_provider
     normalized["lm_client"] = lm_client_config
 
     evaluation_config = dict(normalized.get("evaluation") or {})

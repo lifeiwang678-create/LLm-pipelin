@@ -1,0 +1,7 @@
+# Local experiment outputs
+Results_by_model/
+logs/
+.pytest_cache/
+
+# Local test scratch
+.pytest_tmp/

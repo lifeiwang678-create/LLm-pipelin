@@ -1,30 +1,28 @@
 #!/bin/bash
 #SBATCH -p a100
 #SBATCH --gres=shard:1
-#SBATCH -J llm_72_debug
-#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.out
-#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.err
+#SBATCH -J llm_48_main_api
+#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_48_main_api_%j.out
+#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_48_main_api_%j.err
 #SBATCH --time=08:00:00
 
 set -euo pipefail
 
 BASE=${BASE:-/home/users/grad/2025/25t9801/projects/LLm-pipelin/experiment_4x3x2}
-LOGROOT=${LOGROOT:-/home/users/grad/2025/25t9801/logs/llm_72_debug_$(date +%Y%m%d%H%M%S)}
-MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}
-SERVED_MODEL_NAME=${SERVED_MODEL_NAME:-qwen2.5-7b-instruct}
-HOST=${HOST:-127.0.0.1}
-PORT=${PORT:-8000}
-API_URL="http://${HOST}:${PORT}/v1"
-API_KEY=${API_KEY:-lm-studio}
+LOGROOT=${LOGROOT:-/home/users/grad/2025/25t9801/logs/llm_48_main_noagent_api_$(date +%Y%m%d%H%M%S)}
+API_URL=${API_URL:-https://api.openai.com/v1}
+API_KEY=${API_KEY:-${OPENAI_API_KEY:-}}
+LLM_MODEL=${LLM_MODEL:-gpt-5.4-mini}
 CONCURRENCY=${CONCURRENCY:-8}
-SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
+SUBSET_LEVEL=${SUBSET_LEVEL:-main}
 FEW_SHOT_TRAIN_SUBSET_LEVEL=${FEW_SHOT_TRAIN_SUBSET_LEVEL:-pilot}
 FEW_SHOT_EXAMPLE_SUBJECTS=${FEW_SHOT_EXAMPLE_SUBJECTS:-3}
 LOG_EVERY=${LOG_EVERY:-1}
-VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.25}
-VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
-VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS:-16}
-VLLM_MAX_NUM_BATCHED_TOKENS=${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
+
+if [[ -z "${API_KEY}" ]]; then
+  echo "ERROR: API_KEY is not set. Export API_KEY or OPENAI_API_KEY before running this script."
+  exit 1
+fi
 
 mkdir -p "$LOGROOT"
 cd "$BASE"
@@ -33,6 +31,7 @@ echo "Job started at $(date)"
 echo "Base: $BASE"
 echo "Log dir: $LOGROOT"
 echo "API URL: $API_URL"
+echo "LLM model: $LLM_MODEL"
 echo "Client concurrency: $CONCURRENCY"
 echo "Evaluation subset: $SUBSET_LEVEL"
 echo "Few-shot train subset: $FEW_SHOT_TRAIN_SUBSET_LEVEL"
@@ -61,9 +60,6 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   GPU_MONITOR_PID=$!
 fi
 
-source .venv_vllm_cu121/bin/activate
-
-VLLM_PID=""
 GPU_MONITOR_PID="${GPU_MONITOR_PID:-}"
 
 cleanup () {
@@ -71,55 +67,8 @@ cleanup () {
     kill "$GPU_MONITOR_PID" 2>/dev/null || true
     wait "$GPU_MONITOR_PID" 2>/dev/null || true
   fi
-  if [[ -n "${VLLM_PID:-}" ]]; then
-    kill "$VLLM_PID" 2>/dev/null || true
-    wait "$VLLM_PID" 2>/dev/null || true
-  fi
 }
 trap cleanup EXIT
-
-if curl -fsS "${API_URL}/models" > /dev/null 2>&1; then
-  echo "A server is already responding on ${API_URL}/models."
-  echo "Stop it first or change PORT."
-  exit 1
-fi
-
-nohup vllm serve "$MODEL_PATH" \
-  --served-model-name "$SERVED_MODEL_NAME" \
-  --host "$HOST" \
-  --port "$PORT" \
-  --dtype bfloat16 \
-  --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
-  --max-model-len "$VLLM_MAX_MODEL_LEN" \
-  --max-num-seqs "$VLLM_MAX_NUM_SEQS" \
-  --max-num-batched-tokens "$VLLM_MAX_NUM_BATCHED_TOKENS" \
-  --disable-log-requests \
-  > "$LOGROOT/vllm.log" 2>&1 &
-VLLM_PID=$!
-
-echo "Waiting for vLLM..."
-READY=0
-for _ in $(seq 1 120); do
-  if ! kill -0 "$VLLM_PID" 2>/dev/null; then
-    echo "vLLM exited before becoming ready."
-    tail -120 "$LOGROOT/vllm.log" || true
-    exit 1
-  fi
-  if curl -fsS "${API_URL}/models" > /dev/null 2>&1; then
-    READY=1
-    break
-  fi
-  sleep 10
-done
-
-if [[ "$READY" -ne 1 ]]; then
-  echo "vLLM failed to become ready."
-  tail -120 "$LOGROOT/vllm.log" || true
-  exit 1
-fi
-
-echo "vLLM ready at $(date)"
-curl -fsS "${API_URL}/models" > "$LOGROOT/vllm_models.json" || true
 
 source .venv/bin/activate
 
@@ -177,10 +126,6 @@ run_one () {
     fi
   fi
 
-  if [[ "$lm" == "multi_agent" ]]; then
-    extra_args+=(--multi-agent-intermediate-max-tokens 128)
-  fi
-
   set +e
   python main.py \
     -dataset "$dataset" \
@@ -193,7 +138,7 @@ run_one () {
     --eval-input-cache-file "$eval_cache" \
     --api-url "$API_URL" \
     --api-key "$API_KEY" \
-    -llm "$SERVED_MODEL_NAME" \
+    -llm "$LLM_MODEL" \
     --concurrency "$CONCURRENCY" \
     --log-every "$LOG_EVERY" \
     "${extra_args[@]}" \
@@ -213,7 +158,7 @@ run_one () {
 
 for dataset in WESAD HHAR DREAMT; do
   for input in raw_data feature_description encoded_time_series extra_knowledge; do
-    for lm in direct few_shot multi_agent; do
+    for lm in direct few_shot; do
       for output in label_only label_explanation; do
         run_one "$dataset" "$input" "$lm" "$output"
       done
@@ -225,7 +170,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi > "$LOGROOT/nvidia_smi_end.txt" || true
 fi
 
-echo "All 72 debug combinations finished at $(date)"
+echo "All 48 no-agent MAIN/full-subset combinations finished at $(date)"
 echo "Failures: $failures"
 echo "Logs saved in: $LOGROOT"
 

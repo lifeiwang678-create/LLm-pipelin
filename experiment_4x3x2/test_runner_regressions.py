@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from core.lm_client import build_lm_client
 from core.runner import (
     _cache_loader_metadata,
     _can_share_lm_usage,
+    _normalize_run_config,
     _run_eval_samples,
     _validate_balanced_per_label_counts,
     _validate_subject_config_semantics,
@@ -35,6 +39,58 @@ def test_few_shot_usage_is_not_shared_between_workers() -> None:
     )
 
     assert _can_share_lm_usage("few_shot", usage) is False
+
+
+def test_default_lm_client_stays_openai_compatible() -> None:
+    config = _normalize_run_config(
+        {
+            "dataset": {"name": "WESAD"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+            "output": {"type": "label_only"},
+        },
+        dataset_name="WESAD",
+    )
+
+    assert config["lm_client"]["provider"] == "openai_compatible"
+    assert config["lm_client"]["api_key"] == "lm-studio"
+    assert config["lm_client"]["model"] == "qwen2.5-14b-instruct"
+
+
+def test_gemini_lm_client_uses_environment_key_by_default() -> None:
+    config = _normalize_run_config(
+        {
+            "dataset": {"name": "WESAD"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+            "output": {"type": "label_only"},
+            "lm_client": {"provider": "gemini"},
+        },
+        dataset_name="WESAD",
+    )
+
+    assert config["lm_client"]["provider"] == "gemini"
+    assert config["lm_client"]["model"] == "gemini-3.5-flash"
+    assert "api_key" not in config["lm_client"]
+
+
+def test_gemini_lm_client_reports_missing_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="Set GEMINI_API_KEY"):
+        build_lm_client({"provider": "gemini"})
+
+
+def test_lm_client_accepts_legacy_max_tokens_config() -> None:
+    client = build_lm_client(
+        {
+            "provider": "openai_compatible",
+            "model": "qwen2.5-14b-instruct",
+            "max_tokens": 321,
+        }
+    )
+
+    assert client.max_completion_tokens == 321
 
 
 def test_parallel_evaluation_reports_multiple_failures(tmp_path: Path) -> None:
