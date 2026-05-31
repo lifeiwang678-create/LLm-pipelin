@@ -702,6 +702,26 @@ Core dependencies include:
 - `PyYAML`
 - `scipy`
 - `neurokit2`
+- `google-genai`
+
+## Gemini Provider
+
+The runner can call Gemini through the official `google-genai` SDK. Set the
+API key as an environment variable instead of putting it in code or JSON:
+
+```powershell
+$env:GEMINI_API_KEY = "your-api-key"
+python main.py -dataset WESAD -Input feature_description -LM direct -output label_only --lm-provider gemini
+```
+
+For JSON/YAML configs, set:
+
+```json
+"lm_client": {
+  "provider": "gemini",
+  "model": "gemini-3.5-flash"
+}
+```
 
 ## Development Notes
 

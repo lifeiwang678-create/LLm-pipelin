@@ -39,7 +39,20 @@ def parse_args() -> argparse.Namespace:
         help="Output type.",
     )
 
-    parser.add_argument("-llm", default="qwen2.5-14b-instruct", help="OpenAI-compatible model name.")
+    parser.add_argument(
+        "--lm-provider",
+        choices=["openai_compatible", "gemini"],
+        default="openai_compatible",
+        help="LLM backend provider. Use gemini to call the official google-genai SDK.",
+    )
+    parser.add_argument(
+        "-llm",
+        default=None,
+        help=(
+            "Model name. Defaults to qwen2.5-14b-instruct for openai_compatible "
+            "and gemini-3.5-flash for gemini."
+        ),
+    )
     parser.add_argument(
         "--api-url",
         default="http://127.0.0.1:1234/v1",
@@ -47,8 +60,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--api-key",
-        default="lm-studio",
-        help="API key for the OpenAI-compatible server. Local vLLM usually ignores this unless configured.",
+        default=None,
+        help=(
+            "API key override. For gemini, prefer setting GEMINI_API_KEY in the environment "
+            "and omit this argument."
+        ),
     )
     parser.add_argument(
         "--data-dir",

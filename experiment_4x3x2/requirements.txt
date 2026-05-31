@@ -5,3 +5,4 @@ requests
 PyYAML
 scipy
 neurokit2
+google-genai
