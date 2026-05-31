@@ -15,7 +15,9 @@ from core.runner import (
     _validate_subject_config_semantics,
 )
 from core.schema import LLMSample
+from Input.extra_knowledge import DEFAULT_DATASET_KNOWLEDGE
 from LM import build_lm_usage
+from LM.direct import DirectUsage
 from LM.few_shot import FewShotUsage
 
 
@@ -118,6 +120,62 @@ def test_lm_client_accepts_legacy_max_tokens_config() -> None:
     )
 
     assert client.max_completion_tokens == 321
+
+
+def test_direct_prompt_uses_symmetric_label_calibration() -> None:
+    usage = DirectUsage(
+        labels=[0, 1],
+        input_name="feature_description",
+        output_instructions='Return JSON with "predicted_state".',
+        dataset="WESAD",
+    )
+    prompt = usage.build_prompt(_sample(1))
+
+    assert "Treat all allowed labels symmetrically" in prompt
+    assert "neither label 0 nor label 1 is a default or safer answer" in prompt
+    assert "Compare the strongest evidence for label 0 against the strongest evidence for label 1" in prompt
+    assert "Choose label 1 only when label 1 support clearly outweighs label 0" not in prompt
+    assert "Choose label 0 when label 0 support is stronger, or when label 1 cues are ambiguous" not in prompt
+
+
+def test_dataset_rules_are_symmetric_for_target_datasets() -> None:
+    wesad_prompt = DirectUsage(
+        labels=[0, 1],
+        input_name="feature_description",
+        output_instructions='Return JSON with "predicted_state".',
+        dataset="WESAD",
+    ).build_prompt(_sample(1))
+    hhar_prompt = DirectUsage(
+        labels=[0, 1],
+        input_name="feature_description",
+        output_instructions='Return JSON with "predicted_state".',
+        dataset="HHAR",
+    ).build_prompt(LLMSample(dataset="HHAR", subject="S1", label=0, input_text="sample"))
+    dreamt_prompt = DirectUsage(
+        labels=[0, 1],
+        input_name="feature_description",
+        output_instructions='Return JSON with "predicted_state".',
+        dataset="DREAMT",
+    ).build_prompt(LLMSample(dataset="DREAMT", subject="S1", label=0, input_text="sample"))
+
+    assert "Do not use either label as a default fallback" in wesad_prompt
+    assert "Compare upstairs and downstairs motion evidence symmetrically" in hhar_prompt
+    assert "Compare wake-like and sleep-like evidence symmetrically" in dreamt_prompt
+
+
+def test_extra_knowledge_guidance_is_symmetric() -> None:
+    assert (
+        "Compare no-stress and stress evidence symmetrically across the full window."
+        in DEFAULT_DATASET_KNOWLEDGE["WESAD"]["decision_guidance"]
+    )
+    assert (
+        "Compare upstairs and downstairs temporal pattern evidence symmetrically."
+        in DEFAULT_DATASET_KNOWLEDGE["HHAR"]["decision_guidance"]
+    )
+    assert (
+        "Compare wake-like and sleep-like evidence symmetrically."
+        in DEFAULT_DATASET_KNOWLEDGE["DREAMT"]["decision_guidance"]
+    )
 
 
 def test_parallel_evaluation_reports_multiple_failures(tmp_path: Path) -> None:

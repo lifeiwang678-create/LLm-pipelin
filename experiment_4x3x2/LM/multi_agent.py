@@ -90,7 +90,9 @@ Important constraints:
 - Use only the information provided in this prompt.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
-- Do not treat one high absolute sensor value as sufficient evidence for label 1 or the positive class.
+- Treat all allowed labels symmetrically; neither label 0 nor label 1 is a default or safer answer.
+- Compare the strongest evidence for label 0 against the strongest evidence for label 1 before deciding.
+- If evidence is mixed, choose the label with the stronger overall support; do not choose a label because it appears earlier or feels safer.
 - The final answer must follow the requested JSON schema.
 
 Sample content:
@@ -170,8 +172,9 @@ Constraints:
 - Do not use knowledge outside the provided prompt.
 - Do not invent sensor values, features, labels, or retrieved examples.
 - Apply the dataset-specific label rules exactly.
-- Consider both positive and negative evidence.
-- Do not rely on one isolated high absolute sensor value.
+- Treat all allowed labels symmetrically; neither label 0 nor label 1 is a default or safer answer.
+- Compare the strongest evidence for label 0 against the strongest evidence for label 1 before deciding.
+- If evidence is mixed, choose the label with the stronger overall support; do not choose a label because it appears earlier or feels safer.
 - If evidence is weak, lower confidence rather than forcing strong certainty.
 - Output JSON only.
 
@@ -236,7 +239,9 @@ Critical constraints:
 - Apply the dataset-specific label rules exactly.
 - The majority vote is useful evidence, but it is not automatically correct.
 - Override the majority vote only when the sample content and label rules support the override.
-- Do not default to label 1 or the positive class because a single sensor feature is high.
+- Treat all allowed labels symmetrically; neither label 0 nor label 1 is a default or safer answer.
+- Compare the strongest evidence for label 0 against the strongest evidence for label 1 before deciding.
+- If evidence is mixed, choose the label with the stronger overall support; do not choose a label because it appears earlier or feels safer.
 
 Sample content:
 {sample.input_text}

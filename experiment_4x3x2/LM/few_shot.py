@@ -109,8 +109,11 @@ Important constraints:
 - Use the examples only as label-format and decision-reference demonstrations.
 - Do not use knowledge outside the provided prompt.
 - Apply the dataset-specific label rules exactly.
-- Do not predict label 1 or the positive class from one high absolute sensor value alone.
-- Consider evidence for both labels before choosing the final label.
+- Treat all allowed labels symmetrically; neither label 0 nor label 1 is a default or safer answer.
+- Compare the strongest evidence for label 0 against the strongest evidence for label 1 before deciding.
+- Choose label 0 when label 0 has stronger overall support.
+- Choose label 1 when label 1 has stronger overall support.
+- If evidence is mixed, choose the label with the stronger overall support; do not choose a label because it appears earlier or feels safer.
 - Do not add extra explanation outside JSON.
 - Predict only the label of the final sample.
 

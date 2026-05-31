@@ -26,7 +26,7 @@ DEFAULT_DATASET_KNOWLEDGE = {
         ],
         "decision_guidance": [
             "Use the WESAD binary mapping exactly: baseline, amusement, meditation, and recovery-like states are no-stress.",
-            "Do not treat physiological arousal as stress unless the evidence is consistent across multiple channels.",
+            "Compare no-stress and stress evidence symmetrically across the full window.",
             "Do not classify the state from one physiological feature alone.",
             "Consider whether movement-related features may affect physiological signals.",
             "Use cross-channel consistency as supporting evidence.",
@@ -42,6 +42,7 @@ DEFAULT_DATASET_KNOWLEDGE = {
             "Device placement, user differences, and orientation may affect signal magnitude.",
         ],
         "decision_guidance": [
+            "Compare upstairs and downstairs temporal pattern evidence symmetrically.",
             "Motion intensity alone may not uniquely identify the activity.",
             "Interpret accelerometer and gyroscope information jointly.",
             "Prefer temporal pattern evidence over isolated values.",
@@ -57,6 +58,7 @@ DEFAULT_DATASET_KNOWLEDGE = {
             "Individual variation and sensor noise should be considered.",
         ],
         "decision_guidance": [
+            "Compare wake-like and sleep-like evidence symmetrically.",
             "Use the whole temporal window as evidence.",
             "Avoid overinterpreting one abnormal value.",
             "Interpret available channels jointly.",
