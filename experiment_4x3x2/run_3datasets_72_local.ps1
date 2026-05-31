@@ -1,5 +1,5 @@
 <#
-Run 72 debug combinations locally on Windows PowerShell with OpenAI GPT API.
+Run 48 MAIN/full-subset combinations locally on Windows PowerShell with OpenAI GPT API.
 
 Environment:
   Code:      C:\path\to\LLm-pipelin\experiment_4x3x2
@@ -11,10 +11,10 @@ Usage:
 
   $env:OPENAI_API_KEY = "your_new_openai_api_key"
   $env:PROCESSED_ROOT = "D:\DATA\experiment_4x3x2\Processed"
-  $env:LLM_MODEL = "gpt-4o-mini"
-  $env:SUBSET_LEVEL = "debug"
+  $env:LLM_MODEL = "gpt-5.4-mini"
+  $env:SUBSET_LEVEL = "main"
   $env:FEW_SHOT_TRAIN_SUBSET_LEVEL = "pilot"
-  $env:FEW_SHOT_EXAMPLE_SUBJECTS = "5"
+  $env:FEW_SHOT_EXAMPLE_SUBJECTS = "3"
   $env:CONCURRENCY = "1"
 
   powershell -ExecutionPolicy Bypass -File .\run_3datasets_72_local.ps1
@@ -38,7 +38,7 @@ if (-not $PROCESSED_ROOT) {
 
 $LOGROOT = $env:LOGROOT
 if (-not $LOGROOT) {
-    $LOGROOT = Join-Path $BASE ('logs\llm_72_gpt_debug_' + (Get-Date -Format "yyyyMMddHHmmss"))
+    $LOGROOT = Join-Path $BASE ('logs\llm_48_gpt_noagent_main_' + (Get-Date -Format "yyyyMMddHHmmss"))
 }
 
 # =========================
@@ -57,7 +57,7 @@ if (-not $API_KEY) {
 
 $LLM_MODEL = $env:LLM_MODEL
 if (-not $LLM_MODEL) {
-    $LLM_MODEL = "gpt-4o-mini"
+    $LLM_MODEL = "gpt-5.4-mini"
 }
 
 $CONCURRENCY = $env:CONCURRENCY
@@ -71,7 +71,7 @@ if (-not $CONCURRENCY) {
 
 $SUBSET_LEVEL = $env:SUBSET_LEVEL
 if (-not $SUBSET_LEVEL) {
-    $SUBSET_LEVEL = "debug"
+    $SUBSET_LEVEL = "main"
 }
 
 $FEW_SHOT_TRAIN_SUBSET_LEVEL = $env:FEW_SHOT_TRAIN_SUBSET_LEVEL
@@ -81,7 +81,7 @@ if (-not $FEW_SHOT_TRAIN_SUBSET_LEVEL) {
 
 $FEW_SHOT_EXAMPLE_SUBJECTS = $env:FEW_SHOT_EXAMPLE_SUBJECTS
 if (-not $FEW_SHOT_EXAMPLE_SUBJECTS) {
-    $FEW_SHOT_EXAMPLE_SUBJECTS = 5
+    $FEW_SHOT_EXAMPLE_SUBJECTS = 3
 }
 
 $LOG_EVERY = $env:LOG_EVERY
@@ -151,7 +151,7 @@ else {
 
 $datasets = @("WESAD", "HHAR", "DREAMT")
 $inputTypes = @("raw_data", "feature_description", "encoded_time_series", "extra_knowledge")
-$lms = @("direct", "few_shot", "multi_agent")
+$lms = @("direct", "few_shot")
 $outputs = @("label_only", "label_explanation")
 
 # =========================
@@ -251,11 +251,6 @@ function Run-One {
         }
     }
 
-    if ($lm -eq "multi_agent") {
-        $extraArgs += "--multi-agent-intermediate-max-tokens"
-        $extraArgs += "128"
-    }
-
     $argList = @(
         "main.py",
         "-dataset", $dataset,
@@ -299,7 +294,7 @@ function Run-One {
 }
 
 # =========================
-# Run all 72 combinations
+# Run all 48 no-agent combinations
 # =========================
 
 foreach ($dataset in $datasets) {
@@ -313,7 +308,7 @@ foreach ($dataset in $datasets) {
 }
 
 Write-Host "=================================================="
-Write-Host "All 72 debug combinations finished at $(Get-Date)"
+Write-Host "All 48 no-agent MAIN/full-subset combinations finished at $(Get-Date)"
 Write-Host "Failures: $script:failures"
 Write-Host "Logs saved in: $LOGROOT"
 Write-Host "Status CSV: $statusCsv"

@@ -1,20 +1,20 @@
 #!/bin/bash
 #SBATCH -p a100
 #SBATCH --gres=shard:1
-#SBATCH -J llm_72_debug
-#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.out
-#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_72_debug_%j.err
+#SBATCH -J llm_48_main_api
+#SBATCH -o /home/users/grad/2025/25t9801/logs/llm_48_main_api_%j.out
+#SBATCH -e /home/users/grad/2025/25t9801/logs/llm_48_main_api_%j.err
 #SBATCH --time=08:00:00
 
 set -euo pipefail
 
 BASE=${BASE:-/home/users/grad/2025/25t9801/projects/LLm-pipelin/experiment_4x3x2}
-LOGROOT=${LOGROOT:-/home/users/grad/2025/25t9801/logs/llm_72_debug_$(date +%Y%m%d%H%M%S)}
+LOGROOT=${LOGROOT:-/home/users/grad/2025/25t9801/logs/llm_48_main_noagent_api_$(date +%Y%m%d%H%M%S)}
 API_URL=${API_URL:-https://api.openai.com/v1}
 API_KEY=${API_KEY:-${OPENAI_API_KEY:-}}
 LLM_MODEL=${LLM_MODEL:-gpt-5.4-mini}
 CONCURRENCY=${CONCURRENCY:-8}
-SUBSET_LEVEL=${SUBSET_LEVEL:-debug}
+SUBSET_LEVEL=${SUBSET_LEVEL:-main}
 FEW_SHOT_TRAIN_SUBSET_LEVEL=${FEW_SHOT_TRAIN_SUBSET_LEVEL:-pilot}
 FEW_SHOT_EXAMPLE_SUBJECTS=${FEW_SHOT_EXAMPLE_SUBJECTS:-3}
 LOG_EVERY=${LOG_EVERY:-1}
@@ -126,10 +126,6 @@ run_one () {
     fi
   fi
 
-  if [[ "$lm" == "multi_agent" ]]; then
-    extra_args+=(--multi-agent-intermediate-max-tokens 128)
-  fi
-
   set +e
   python main.py \
     -dataset "$dataset" \
@@ -162,7 +158,7 @@ run_one () {
 
 for dataset in WESAD HHAR DREAMT; do
   for input in raw_data feature_description encoded_time_series extra_knowledge; do
-    for lm in direct few_shot multi_agent; do
+    for lm in direct few_shot; do
       for output in label_only label_explanation; do
         run_one "$dataset" "$input" "$lm" "$output"
       done
@@ -174,7 +170,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi > "$LOGROOT/nvidia_smi_end.txt" || true
 fi
 
-echo "All 72 debug combinations finished at $(date)"
+echo "All 48 no-agent MAIN/full-subset combinations finished at $(date)"
 echo "Failures: $failures"
 echo "Logs saved in: $LOGROOT"
 

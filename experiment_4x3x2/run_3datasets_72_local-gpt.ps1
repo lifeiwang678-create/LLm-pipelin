@@ -1,9 +1,9 @@
 <#
-Run 72 MAIN/full-subset combinations locally on Windows PowerShell with OpenAI GPT API.
+Run 48 MAIN/full-subset combinations locally on Windows PowerShell with OpenAI GPT API.
 
 Combinations:
-  3 datasets x 4 inputs x 3 LM usages x 2 outputs = 72
-  LM usages: direct, few_shot, multi_agent
+  3 datasets x 4 inputs x 2 LM usages x 2 outputs = 48
+  LM usages: direct, few_shot
 
 This script treats "full data" as SUBSET_LEVEL="main", i.e. the prepared
 LLMSubsets main files:
@@ -28,7 +28,7 @@ Notes:
   - PROCESSED_ROOT should point to the Processed directory.
   - This script avoids using $input because $input is a PowerShell automatic variable.
   - API key is read from OPENAI_API_KEY / API_KEY and also passed to main.py by --api-key.
-  - multi_agent is enabled because the original uploaded script runs 72 combinations.
+  - multi_agent is disabled.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +45,7 @@ if (-not $PROCESSED_ROOT) {
 
 $LOGROOT = $env:LOGROOT
 if (-not $LOGROOT) {
-    $LOGROOT = Join-Path $BASE ('logs\llm_72_gpt_main_' + (Get-Date -Format "yyyyMMddHHmmss"))
+    $LOGROOT = Join-Path $BASE ('logs\llm_48_gpt_noagent_main_' + (Get-Date -Format "yyyyMMddHHmmss"))
 }
 
 $API_URL = $env:API_URL
@@ -138,7 +138,7 @@ else {
 
 $datasets = @("WESAD", "HHAR", "DREAMT")
 $inputTypes = @("raw_data", "feature_description", "encoded_time_series", "extra_knowledge")
-$lms = @("direct", "few_shot", "multi_agent")
+$lms = @("direct", "few_shot")
 $outputs = @("label_only", "label_explanation")
 
 foreach ($dataset in $datasets) {
@@ -222,11 +222,6 @@ function Invoke-One {
         }
     }
 
-    if ($lm -eq "multi_agent") {
-        $extraArgs += "--multi-agent-intermediate-max-tokens"
-        $extraArgs += "128"
-    }
-
     $argList = @(
         "main.py",
         "-dataset", $dataset,
@@ -280,7 +275,7 @@ foreach ($dataset in $datasets) {
 }
 
 Write-Host "=================================================="
-Write-Host "All 72 MAIN/full-subset combinations finished at $(Get-Date)"
+Write-Host "All 48 no-agent MAIN/full-subset combinations finished at $(Get-Date)"
 Write-Host "Failures: $script:failures"
 Write-Host "Logs saved in: $LOGROOT"
 Write-Host "Status CSV: $statusCsv"
