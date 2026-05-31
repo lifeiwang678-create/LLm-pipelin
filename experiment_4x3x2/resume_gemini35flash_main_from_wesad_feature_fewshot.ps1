@@ -59,6 +59,10 @@ $LLM_MODEL = $env:LLM_MODEL
 if (-not $LLM_MODEL) {
     $LLM_MODEL = "gemini-3.5-flash"
 }
+if ($LLM_MODEL -notmatch '^gemini') {
+    Write-Error "ERROR: LLM_MODEL must be a Gemini model for this script. Current LLM_MODEL='$LLM_MODEL'. Set `$env:LLM_MODEL='gemini-3.5-flash' or remove the stale environment variable."
+    exit 1
+}
 
 $SUBSET_LEVEL = $env:SUBSET_LEVEL
 if (-not $SUBSET_LEVEL) {
