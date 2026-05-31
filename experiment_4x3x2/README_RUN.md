@@ -247,9 +247,13 @@ Config files can use the same provider without storing the key:
   "provider": "gemini",
   "model": "gemini-3.5-flash",
   "temperature": 0.0,
-  "max_tokens": 128
+  "max_tokens": 384
 }
 ```
+
+For Gemini CLI runs, the runner now uses larger default output limits to reduce
+truncated JSON: `384` tokens for `label_only` and `768` tokens for
+`label_explanation`.
 
 Default output files are saved under `Results/`:
 

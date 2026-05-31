@@ -8,6 +8,7 @@ from core.lm_client import build_lm_client
 from core.runner import (
     _cache_loader_metadata,
     _can_share_lm_usage,
+    _default_output_max_tokens,
     _normalize_run_config,
     _run_eval_samples,
     _validate_balanced_per_label_counts,
@@ -71,7 +72,33 @@ def test_gemini_lm_client_uses_environment_key_by_default() -> None:
 
     assert config["lm_client"]["provider"] == "gemini"
     assert config["lm_client"]["model"] == "gemini-3.5-flash"
+    assert config["lm_client"]["max_tokens"] == 384
     assert "api_key" not in config["lm_client"]
+
+
+def test_gemini_cli_defaults_use_larger_output_limits() -> None:
+    assert _default_output_max_tokens("label_only", "gemini") == 384
+    assert _default_output_max_tokens("label_explanation", "gemini") == 768
+
+
+def test_gemini_label_explanation_config_uses_larger_output_limit() -> None:
+    config = _normalize_run_config(
+        {
+            "dataset": {"name": "WESAD"},
+            "input": {"type": "feature_description"},
+            "lm_usage": {"type": "direct"},
+            "output": {"type": "label_explanation"},
+            "lm_client": {"provider": "gemini"},
+        },
+        dataset_name="WESAD",
+    )
+
+    assert config["lm_client"]["max_tokens"] == 768
+
+
+def test_openai_compatible_default_output_limits_stay_unchanged() -> None:
+    assert _default_output_max_tokens("label_only", "openai_compatible") == 128
+    assert _default_output_max_tokens("label_explanation", "openai_compatible") == 256
 
 
 def test_gemini_lm_client_reports_missing_api_key(monkeypatch) -> None:

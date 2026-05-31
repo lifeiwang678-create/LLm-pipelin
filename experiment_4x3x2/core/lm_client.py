@@ -252,7 +252,7 @@ class GeminiClient:
         api_key: str | None = None,
         model: str = "gemini-3.5-flash",
         temperature: float = 0.0,
-        max_completion_tokens: int = 128,
+        max_completion_tokens: int = 384,
         timeout: int = 600,
         system_message: str | None = None,
         extra_config: dict | None = None,

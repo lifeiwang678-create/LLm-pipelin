@@ -723,6 +723,10 @@ For JSON/YAML configs, set:
 }
 ```
 
+Gemini runs use larger default output limits than the local OpenAI-compatible
+default to reduce truncated JSON: 384 tokens for `label_only` and 768 tokens
+for `label_explanation`.
+
 ## Development Notes
 
 - Do not use `legacy/` as the active experiment path.

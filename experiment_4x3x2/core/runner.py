@@ -38,18 +38,25 @@ DEFAULT_GEMINI_LM_CLIENT_CONFIG = {
     "provider": GEMINI_PROVIDER,
     "model": "gemini-3.5-flash",
     "temperature": 0.0,
-    "max_tokens": 128,
+    "max_tokens": 384,
     "timeout": 1200,
 }
 
 DEFAULT_LM_CLIENT_CONFIG = DEFAULT_OPENAI_COMPATIBLE_LM_CLIENT_CONFIG
 
 
+def _default_output_max_tokens(output_type: str, lm_provider: str) -> int:
+    if lm_provider == GEMINI_PROVIDER:
+        return 768 if output_type == "label_explanation" else 384
+    return 256 if output_type == "label_explanation" else 128
+
+
 def build_experiment_config(args: Namespace) -> dict:
     dataset_cfg = get_dataset_config(args.dataset)
     long_input = args.Input in {"raw_data", "embedding_alignment", "encoded_time_series", "extra_knowledge"}
     lm_timeout = 1200 if args.LM == "multi_agent" else 600 if long_input else 300
-    max_tokens = 256 if args.output == "label_explanation" else 128
+    lm_provider = normalize_lm_provider(getattr(args, "lm_provider", OPENAI_COMPATIBLE_PROVIDER))
+    max_tokens = _default_output_max_tokens(args.output, lm_provider)
     default_few_shot_n = 1 if long_input else 2
     default_example_max_chars = 800 if long_input else None
     default_intermediate_max_tokens = 512
@@ -119,7 +126,6 @@ def build_experiment_config(args: Namespace) -> dict:
             }
         )
 
-    lm_provider = normalize_lm_provider(getattr(args, "lm_provider", OPENAI_COMPATIBLE_PROVIDER))
     default_model = "gemini-3.5-flash" if lm_provider == GEMINI_PROVIDER else "qwen2.5-14b-instruct"
     lm_client_config = {
         "provider": lm_provider,
@@ -1075,6 +1081,12 @@ def _normalize_run_config(config: dict, dataset_name: str | None) -> dict:
     else:
         lm_client_config = dict(DEFAULT_OPENAI_COMPATIBLE_LM_CLIENT_CONFIG)
     lm_client_config.update(raw_lm_client_config)
+    if (
+        lm_provider == GEMINI_PROVIDER
+        and "max_tokens" not in raw_lm_client_config
+        and "max_completion_tokens" not in raw_lm_client_config
+    ):
+        lm_client_config["max_tokens"] = _default_output_max_tokens(output_config.get("type"), lm_provider)
     lm_client_config["provider"] = lm_provider
     normalized["lm_client"] = lm_client_config
 
